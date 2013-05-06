@@ -29,16 +29,20 @@
  */
 
 typedef enum  {
-  PRESCALE_DIV120 = 0x00,
-  PRESCALE_DIV180 = 0x01,
-  PRESCALE_DIV240 = 0x02,
-  PRESCALE_DIV360 = 0x03,
-  PRESCALE_DIV480 = 0x04,
-  PRESCALE_DIV12k = 0x08,
-  PRESCALE_DIV24k = 0x09,
-  PRESCALE_DIV36k = 0x0a,
-  PRESCALE_DIV48k = 0x0b,
-  PRESCALE_DIV72k = 0x0c
+  PRESCALE_INVALID = 0x00,
+  PRESCALE_DIV120  = 0x00,
+  PRESCALE_DIV180  = 0x01,
+  PRESCALE_DIV240  = 0x02,
+  PRESCALE_DIV360  = 0x03,
+  PRESCALE_DIV480  = 0x04,
+  PRESCALE_INVx05  = 0x05,
+  PRESCALE_INVx06  = 0x06,
+  PRESCALE_INVx07  = 0x07,
+  PRESCALE_DIV12k  = 0x08,
+  PRESCALE_DIV24k  = 0x09,
+  PRESCALE_DIV36k  = 0x0a,
+  PRESCALE_DIV48k  = 0x0b,
+  PRESCALE_DIV72k  = 0x0c
 } pwm_ctrl_prescale_t;
 
 
@@ -63,6 +67,9 @@ typedef struct {
 
 
 #define A10CLK 24000000
+#define MAX_CYCLES 0x0ffUL
+
+#define NO_ENABLE_CHANGE 2
 
 #define PWM_CTRL_ENABLE 1
 #define PWM_CTRL_DISABLE 1
@@ -138,7 +145,8 @@ typedef struct {
   unsigned int channel;
   unsigned long period;
   unsigned long duty;
-  unsigned int duty_percent;
+  int duty_percent;
+  pwm_ctrl_prescale_t prescale;
   sun4i_pwm_period_t period_reg;
   sun4i_pwm_ctrl_ut ctrl_backup;
   sun4i_pwm_ctrl_ut ctrl_mask;
@@ -149,3 +157,9 @@ typedef struct {
   char *pin_name;
   char *gpio_name;
 } sun4i_pwm_available_channel_t;
+
+typedef struct {
+  char * suffix;
+  unsigned long multiplier;
+  bool freq;
+} time_suffix_t;

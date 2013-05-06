@@ -32,6 +32,8 @@
 #include <asm/delay.h>
 #include <mach/platform.h>
 #include <linux/pwm.h>
+#include <linux/ctype.h>
+#include <linux/limits.h>
 #include <pwm-sunxi.h>
 
 
@@ -43,12 +45,12 @@ const sun4i_pwm_ctrl_ut * save_pwm_ctrl(int channel);
 void release_pwm_sunxi(struct kobject *kobj);
 void setup_available_channels(void );
 ssize_t set_pwm_mode(unsigned int enable, sun4i_pwm_available_channel_t *chan);
-pwm_ctrl_prescale_t  get_best_prescale(sun4i_pwm_available_channel_t *chan);
-unsigned int get_entire_cycles(unsigned prescale,  sun4i_pwm_available_channel_t *chan);
-unsigned int get_active_cycles(unsigned prescale,  sun4i_pwm_available_channel_t *chan);
-
-
-
+pwm_ctrl_prescale_t  get_best_prescale(unsigned long long period);
+unsigned int get_entire_cycles(sun4i_pwm_available_channel_t *chan);
+unsigned int get_active_cycles(sun4i_pwm_available_channel_t *chan);
+unsigned long convert_string_to_microseconds(const char *buf);
+int pwm_set_period_and_duty(sun4i_pwm_available_channel_t *chan);
+void fixup_duty(sun4i_pwm_available_channel_t *chan);
 static DEFINE_MUTEX(sysfs_lock);
 static struct class pwm_class;
 
@@ -142,14 +144,14 @@ int init_module(void)
 
   pwm0_gpio3 = device_create(&pwm_class,NULL,MKDEV(0,0),&pwm_available_chan[0],"pwm0.gpio3");
   pwm1_gpio5 = device_create(&pwm_class,NULL,MKDEV(0,0),&pwm_available_chan[1],"pwm1.gpio5");
-  /* pwm0_kobj = kobject_create_and_add("pwm0.gpio3",pwm_class.dev_kobj); */
+
   pwm0_kobj = &pwm0_gpio3->kobj;
   pwm1_kobj = &pwm1_gpio5->kobj;
   return_val = sysfs_create_group(pwm0_kobj,&pwm_attr_group);
   if(return_val) {
     printk(KERN_INFO "pwm-sunxi: return from sysfs_create_group(pwm0.gpio3) was %d",return_val);
   }
-  /* pwm1_kobj = kobject_create_and_add("pwm1.gpio5",pwm_class.dev_kobj); */
+
   return_val = sysfs_create_group(pwm1_kobj,&pwm_attr_group);
   if(return_val) {
     printk(KERN_INFO "pwm-sunxi: return from sysfs_create_group(pwm1.gpio5) was %d",return_val);
@@ -188,22 +190,20 @@ void cleanup_module(void)
  * Functions to display the pwm variables currently set
  */
 
-
 static ssize_t pwm_polarity_show(struct device *dev, struct device_attribute *attr, char *buf) {
   const sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
   ssize_t status;
   switch (chan->channel) {
   case 0:
-    status = sprintf(buf,"%d",chan->ctrl_current.s.ch0_act_state);
+    status = scnprintf(buf,PAGE_SIZE,"%d",chan->ctrl_current.s.ch0_act_state);
     break;
   case 1:
-    status = sprintf(buf,"%d",chan->ctrl_current.s.ch1_act_state);
+    status = scnprintf(buf,PAGE_SIZE,"%d",chan->ctrl_current.s.ch1_act_state);
     break;
   default:
     status = -EINVAL;
     break;
   }
-
   return status;
 }
 static ssize_t pwm_period_show(struct device *dev, struct device_attribute *attr, char *buf) {
@@ -239,7 +239,8 @@ static ssize_t pwm_request_show(struct device *dev,struct device_attribute *attr
   return 0;
 }
 static ssize_t pwm_duty_percent_show(struct device *dev,struct device_attribute *attr, char *buf) {
-  return 0;
+  const sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
+  return sprintf(buf,"%u",chan->duty_percent);
 }
 static ssize_t pwm_pulse_show(struct device *dev,struct device_attribute *attr, char *buf) {
   const sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
@@ -291,7 +292,7 @@ static ssize_t pwm_polarity_store(struct device *dev,struct device_attribute *at
       chan->ctrl_current.s.ch0_act_state = act_state;
       break;
     case 1:
-      chan->ctrl_current.s.ch0_act_state = act_state;
+      chan->ctrl_current.s.ch1_act_state = act_state;
       break;
     default:
       status = -EINVAL;
@@ -307,68 +308,235 @@ static ssize_t pwm_period_store(struct device *dev,struct device_attribute *attr
 
   printk(KERN_INFO "pwm: dev = %p, attr = %p, buf = %p, chan = %p,  size = %d\n",dev,attr,buf,chan,size);
 
-  sscanf(buf,"%Lu",&period); /* L means long long pointer */
-  period = period > 4000000000 ? 4000000000 : period;
-  chan->period = period;
+  period = convert_string_to_microseconds(buf);
+  if(!period || period > ULONG_MAX) {
+    printk(KERN_INFO "pwm: Invalid period = %Lu",period);
+    size = -EINVAL;
+  } else {
+    if(period <= chan->duty) {
+      chan->duty = period;
+    }
+    chan->period = period;
+    chan->prescale = get_best_prescale(period);
+    fixup_duty(chan);
+    if(chan->duty) {
+      set_pwm_mode(NO_ENABLE_CHANGE,chan);
+    }
+  }
   return size;
 }
 static ssize_t pwm_duty_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size) {
   unsigned long long duty = 0;
   sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
 
-  printk(KERN_INFO "pwm: dev = %p, attr = %p, buf = %p, chan = %p,  size = %d\n",dev,attr,buf,chan,size);
+  printk(KERN_INFO "pwm: (duty_store)dev = %p, attr = %p, buf = %p, chan = %p,  size = %d\n",dev,attr,buf,chan,size);
 
-  sscanf(buf,"%Lu",&duty); /* L means long long pointer */
-  duty = duty > 4000000000 ? 4000000000 : duty;
-
+  /* sscanf(buf,"%Lu",&duty); */ /* L means long long pointer */
+  duty = convert_string_to_microseconds(buf);
+  duty = duty > ULONG_MAX ? ULONG_MAX : duty;
+  duty = duty > chan->period ? chan->period : duty;
+  chan->duty_percent = -1; /* disable duty_percent if duty is set by hand */
   chan->duty = duty;
+  set_pwm_mode(NO_ENABLE_CHANGE,chan);
   return size;
 }
 
-static const unsigned long prescale_divisor[13] = {120,
+time_suffix_t suffixes[] = {
+  [0] = { .suffix = "hz",  .multiplier =          1, .freq = true  },
+  [1] = { .suffix = "khz", .multiplier =       1000, .freq = true  },
+  [2] = { .suffix = "mhz", .multiplier =    1000000, .freq = true  },
+  [3] = { .suffix = "ghz", .multiplier = 1000000000, .freq = true  },
+  [4] = { .suffix = "ms",  .multiplier =       1000, .freq = false },
+  [5] = { .suffix = "us",  .multiplier =          1, .freq = false },
+  [6] = { .suffix = "ns",  .multiplier =          1, .freq = false },
+  [7] = { .suffix = NULL,  .multiplier =          0, .freq = false },
+};
+
+
+unsigned long convert_string_to_microseconds(const char *buf) {
+  unsigned char ch = 0;
+  char numbers[10];
+  char letters[4];
+  const char *bufptr = buf;
+  int i = 0;
+  unsigned long microseconds = 0;
+  unsigned long numeric_part = 0;
+  int found_suffix = -1;
+  int numbers_index = 0, letters_index = 0;
+  printk(KERN_INFO "Looking for numbers in %s",buf);
+  while(bufptr && *bufptr && (ch = *bufptr)  && isdigit(ch) && numbers_index < (sizeof(numbers)-1)) {
+    numbers[numbers_index++] = *bufptr++;
+  }
+  numbers[numbers_index] = 0;
+  printk(KERN_INFO "Got %s for numbers from %s - now checking %s for letters",numbers,buf,bufptr);
+  while(bufptr && *bufptr && (ch = *bufptr)  && strchr("usmhznhzkg",tolower(ch)) && letters_index < (sizeof(letters)-1)) {
+    letters[letters_index++] = tolower(*bufptr);
+    bufptr++;
+  }
+  letters[letters_index] = 0;
+  printk(KERN_INFO "Got %d for letters from %s",letters_index,buf);
+  printk(KERN_INFO "Got %s for letters from %s",letters,buf);
+  sscanf(numbers,"%lu",&numeric_part);
+  while(suffixes[i].suffix) {
+    printk(KERN_INFO "Comparing suffix \"%s\" with \"%s\"",suffixes[i].suffix,letters);
+    if(!strcmp(suffixes[i].suffix,letters)) {
+      found_suffix = i;
+      break;
+    }
+    i++;
+  }
+  if(found_suffix > -1) {
+    if(suffixes[found_suffix].freq) {
+      microseconds = 1000000 / (numeric_part * suffixes[found_suffix].multiplier);
+    } else {
+      microseconds = suffixes[found_suffix].multiplier * numeric_part;
+    }
+  } else {
+    printk(KERN_INFO "Couldn't match the letters \"%s\" with anything",letters);
+  }
+
+  printk(KERN_INFO "converted %s to %lu microseconds",buf,microseconds);
+
+  return microseconds;
+}
+
+
+
+
+static const unsigned int prescale_divisor[13] = {120,
                                                   180,
                                                   240,
                                                   360,
                                                   480,
-                                                  1,
-                                                  1,
-                                                  1,
+                                                  480, /* Invalid Option */
+                                                  480, /* Invalid Option */
+                                                  480, /* Invalid Option */
                                                   12000,
                                                   24000,
                                                   36000,
                                                   48000,
                                                   72000};
 
-pwm_ctrl_prescale_t  get_best_prescale(sun4i_pwm_available_channel_t *chan) {
+pwm_ctrl_prescale_t  get_best_prescale(unsigned long long period_in) {
   int i;
-  const unsigned long long max_cycles = 0x0ff; /* 255 */
+  unsigned long period = period_in;
+  const unsigned long min_optimal_period_cycles = 0x07f; /* 127 */
+  const unsigned long min_period_cycles = 0x02; /* 10 */
   pwm_ctrl_prescale_t best_prescale = 0;
 
+  /*
+   *
+   * (clock / 2) / (2 * clock) * scale * period (around 200)
+   * TOP = f_clk/ (2 x N x f_ocr)
+
+   * f(OCnxPFCPWM) = 24mhz / (2 * prescale * TOP)
+   * or f(OCnxPFCPWM) * TOP = 24mhz / (2 * prescale)
+   ********** or f(OCnxPFCPWM) * TOP * 2 = 24mhz / prescale
+   entire_cycles = chan->period / (2 * prescale_divisor[chan->prescale] / 24);
+
+
+   */
+
+  best_prescale = -1;
   for(i = 0 ; i < 13 ; i++) {
-    printk(KERN_INFO "pwm: checking prescale for %Lu\n",(unsigned long long)((max_cycles * 24L * prescale_divisor[i])));
-    if((chan->period) < ((max_cycles * 24L * prescale_divisor[i]))) {
+    unsigned long int check_value = (prescale_divisor[i] / 48);
+    if(check_value < 1 || check_value > period) {
+      printk(KERN_INFO "pwm: Skipping index %d",i);
+      break;
+    }
+    printk(KERN_INFO "pwm: checking prescale for %lu <= %lu and %lu >= %lu\n",
+           period / check_value,
+           MAX_CYCLES,
+           period / check_value,
+           min_optimal_period_cycles
+           );
+
+    if(((period / check_value) >= min_optimal_period_cycles) &&
+       ((period / check_value) <= MAX_CYCLES)) {
       best_prescale = i;
       break;
     }
   }
-  printk(KERN_INFO "pwm: best_prescale is %u for %lu\n",best_prescale,chan->period);
-  printk(KERN_INFO "pwm: divisor is  is %lu\n",prescale_divisor[best_prescale]);
+
+  if(best_prescale > 13) {
+    for(i = 0 ; i < 13 ; i++) {
+      unsigned long int check_value = (prescale_divisor[i] / 48);
+      if(check_value < 1 || check_value > period) {
+        printk(KERN_INFO "pwm: Skipping index %d",i);
+        break;
+      }
+      printk(KERN_INFO "pwm:(2nd pass needed) checking prescale for %lu <= %lu and %lu >= %lu\n",
+             period / check_value,
+             MAX_CYCLES,
+             period / check_value,
+             min_period_cycles
+             );
+      if(((period / check_value) >= min_period_cycles) &&
+         ((period / check_value) <= MAX_CYCLES)) {
+        best_prescale = i;
+        break;
+      }
+    }
+  }
+  if(best_prescale > 13) {
+    printk(KERN_INFO "Couldn't find acceptable prescale value - using PRESCALE_DIV480");
+
+    best_prescale = PRESCALE_DIV480;  /* Something that's not zero - use invalid prescale value */
+  }
+/*
+  chan->prescale = best_prescale;
+  printk(KERN_INFO "Entire cycles will be ",get_entire_cycles(channels));
+  printk(KERN_INFO "Active cycles will be ",get_active_cycles(channels));
+*/
+
+/*
+  for(i = 0 ; i < 13 ; i++) {
+    printk(KERN_INFO "pwm: checking prescale for %Lu\n",(unsigned long long)((max_cycles * 24ULL * (unsigned long long) prescale_divisor[i])));
+    if((period) < ((max_cycles * 24ULL * (unsigned long long)prescale_divisor[i]))) {
+      best_prescale = i;
+      break;
+    }
+  }
+*/
+
+  printk(KERN_INFO "pwm: best_prescale is %u for %lu\n",best_prescale,period);
+  printk(KERN_INFO "pwm: divisor is  is %u\n",prescale_divisor[best_prescale]);
   return best_prescale;
 }
 
-unsigned int get_entire_cycles(unsigned prescale,  sun4i_pwm_available_channel_t *chan) {
-  unsigned long  period_us = chan->period;
-  unsigned int entire_cycles = 0x0ff;
-  entire_cycles = period_us / prescale_divisor[prescale] / 24;
+   /* TOP = f_clk/ (2 x N x f_ocr) */
+unsigned int get_entire_cycles(sun4i_pwm_available_channel_t *chan) {
+  unsigned int entire_cycles = 0x0;
+  /* TOP = f_clk/ (2 x N x f_ocr) */
+  /* entire_cycles = period_us / prescale_divisor[chan->prescale] / 24; */
+  if ((2 * prescale_divisor[chan->prescale] * MAX_CYCLES) > 0) {
+    entire_cycles = chan->period / (prescale_divisor[chan->prescale] / 48);
+    printk(KERN_INFO "pwm: Calculated entire cycles to be %u - hope that's right\n",entire_cycles);
+  }
+  if(entire_cycles == 0) {entire_cycles = 0x0ff;}
   return entire_cycles;
 }
 
-unsigned int get_active_cycles(unsigned prescale,  sun4i_pwm_available_channel_t *chan) {
-  unsigned long duty_us = chan->duty;
+unsigned int get_active_cycles(sun4i_pwm_available_channel_t *chan) {
   unsigned int active_cycles = 0x0ff;
-  active_cycles = (duty_us / prescale_divisor[prescale]) / 24;
+/*  active_cycles = (duty_us / prescale_divisor[chan->prescale]) / 24; */
+  if(!chan->duty && chan->period) {
+    active_cycles = get_entire_cycles(chan);
+    printk(KERN_INFO "pwm: Forcing active cycles to be %u - because it's zero\n",active_cycles);
+  } else if ((2 * prescale_divisor[chan->prescale] * MAX_CYCLES) > 0) {
+    active_cycles = chan->duty / (prescale_divisor[chan->prescale] / 48);
+    printk(KERN_INFO "pwm: Calculated active cycles to be %u - hope that's right\n",active_cycles);
+  }
+  if(active_cycles == 0) {active_cycles = 0x0ff;}
   return active_cycles;
 }
+
+void fixup_duty(sun4i_pwm_available_channel_t *chan) {
+  if(chan->duty_percent > 0) {
+    chan->duty = chan->period * chan->duty_percent / 100;
+  }
+}
+
 
 
 static ssize_t pwm_run_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size) {
@@ -392,7 +560,20 @@ static ssize_t pwm_duty_percent_store(struct device *dev,struct device_attribute
   sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
 
   sscanf(buf,"%u",&duty_percent);
-  chan->duty_percent = duty_percent;
+  if(duty_percent > 100) {
+    printk(KERN_INFO "pwm: Duty percent0 = %d, period = %lu, duty = %lu",chan->duty_percent, chan->period, chan->duty);
+    size = -EINVAL;
+  } else {
+    chan->duty_percent = duty_percent;
+    printk(KERN_INFO "pwm: Duty percent1 = %d, period = %lu, duty = %lu",chan->duty_percent, chan->period, chan->duty);
+    if(chan->period) {
+      printk(KERN_INFO "pwm: Duty percent2 = %d, period = %lu, duty = %lu",chan->duty_percent, chan->period, chan->duty);
+      fixup_duty(chan);
+      set_pwm_mode(NO_ENABLE_CHANGE,chan);
+    }
+  }
+
+  printk(KERN_INFO "pwm: Duty percent3 = %d, period = %lu, duty = %lu",chan->duty_percent, chan->period, chan->duty);
   return size;
 }
 static ssize_t pwm_pulse_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size) {
@@ -409,7 +590,7 @@ static ssize_t pwm_pulse_store(struct device *dev,struct device_attribute *attr,
       chan->ctrl_current.s.ch0_pulse_start = pulse;
       break;
     case 1:
-      chan->ctrl_current.s.ch0_pulse_start = pulse;
+      chan->ctrl_current.s.ch1_pulse_start = pulse;
       break;
     default:
       status = -EINVAL;
@@ -420,21 +601,51 @@ static ssize_t pwm_pulse_store(struct device *dev,struct device_attribute *attr,
   return status;
 }
 
+int pwm_set_period_and_duty(sun4i_pwm_available_channel_t *chan) {
+  int return_val = -EINVAL;
+  int entire_cycles = get_entire_cycles(chan);
+  int active_cycles = get_active_cycles(chan);
+  chan->period_reg.unused1 = chan->period_reg.unused2 = 0;
+  if(entire_cycles > active_cycles && active_cycles) {
+    chan->period_reg.pwm_entire_cycles = entire_cycles;
+    chan->period_reg.pwm_active_cycles = active_cycles;
+  } else {
+    chan->period_reg.pwm_entire_cycles = 0xff;
+    chan->period_reg.pwm_active_cycles = 0xff;
+  }
+  writel(*(unsigned int *)&chan->period_reg, chan->period_reg_addr);
+  return return_val;
+ }
+
+
 ssize_t set_pwm_mode(unsigned int enable, sun4i_pwm_available_channel_t *chan) {
   ssize_t status = 0;
   printk(KERN_INFO "pwm-sunxi(top):chan0 ctrl_addr = %p, pin_addr = %p, period_addr = %p ",
          chan->ctrl_addr,
          chan->pin_addr,
          chan->period_reg_addr);
-  if(enable) {
-    unsigned int best_prescale = 0;
+  if(enable == 2) {
     switch (chan->channel) {
     case 0:
-      chan->ctrl_current.s.ch0_en = enable;
+      enable = chan->ctrl_current.s.ch0_en;
+      break;
+    case 1:
+      enable = chan->ctrl_current.s.ch1_en;
+      break;
+    default:
+      status = -EINVAL;
+      break;
+    }
+  }
+
+  if(enable == 1) {
+    switch (chan->channel) {
+    case 0:
+      chan->ctrl_current.s.ch0_en = 1;
       chan->ctrl_current.s.ch0_clk_gating = 0;
       break;
     case 1:
-      chan->ctrl_current.s.ch1_en = enable;
+      chan->ctrl_current.s.ch1_en = 1;
       chan->ctrl_current.s.ch1_clk_gating = 0;
       break;
     default:
@@ -461,53 +672,53 @@ ssize_t set_pwm_mode(unsigned int enable, sun4i_pwm_available_channel_t *chan) {
     } else if(chan->pin_mask.s0.pin7_select) {
       chan->pin_current.s0.pin7_select = SELECT_PWM;
     }
-    best_prescale = get_best_prescale(chan);
-    chan->period_reg.pwm_entire_cycles = get_entire_cycles(best_prescale,chan);
-    chan->period_reg.pwm_active_cycles = get_active_cycles(best_prescale,chan);
-    writel(*(unsigned int *)&chan->period_reg, chan->period_reg_addr);
     if(chan->channel == 0) {
-      chan->ctrl_current.s.ch0_prescaler = best_prescale;
+      chan->ctrl_current.s.ch0_prescaler = chan->prescale;
     } else {
-      chan->ctrl_current.s.ch1_prescaler = best_prescale;
+      chan->ctrl_current.s.ch1_prescaler = chan->prescale;
     }
-    dump_ioreg_cfg(&chan->pin_current.s0,NULL,"pin_current");
+    pwm_set_period_and_duty(chan);
     dump_pwm_period_reg(&chan->period_reg,NULL,"period");
+    dump_ioreg_cfg(&chan->pin_current.s0,NULL,"pin_current");
     writel(chan->pin_current.initializer,chan->pin_addr);
     writel(chan->ctrl_current.initializer,chan->ctrl_addr);
     switch (chan->channel) {
     case 0:
+      chan->ctrl_current.s.ch0_en = 1;
       chan->ctrl_current.s.ch0_clk_gating = 1;
       break;
     case 1:
+      chan->ctrl_current.s.ch1_en = 1;
       chan->ctrl_current.s.ch1_clk_gating = 1;
       break;
     }
     writel(chan->ctrl_current.initializer,chan->ctrl_addr);
     dump_pwm_ctrl_reg(&chan->ctrl_current.s,NULL,"pwm_ctrl");
-  } else {
+  } else if (enable == 0) {
     switch (chan->channel) {
     case 0:
+      chan->ctrl_current.s.ch0_clk_gating = 0;
       chan->ctrl_current.s.ch0_en = enable;
       break;
     case 1:
-      chan->ctrl_current.s.ch0_en = enable;
+      chan->ctrl_current.s.ch1_clk_gating = 0;
+      chan->ctrl_current.s.ch1_en = enable;
       break;
     default:
       status = -EINVAL;
       break;
     }
-    if(status) {
-      return status;
-    }
+    if(!status) {
     chan->pin_current.initializer &= ~chan->pin_mask.initializer;
     chan->pin_current.initializer |= readl(chan->pin_addr) & chan->pin_mask.initializer;
+    }
   }
   printk(KERN_INFO "pwm-sunxi(bottom):chan0 ctrl_addr = %p, pin_addr = %p, period_addr = %p ",
          chan->ctrl_addr,
          chan->pin_addr,
          chan->period_reg_addr);
 
-  return 0;
+  return status;
 }
 
 
@@ -687,8 +898,8 @@ void setup_available_channels( void ) {
   void * portc_io_base = ioremap(SW_PA_PORTC_IO_BASE,0x400);
   void * PB_CFG0_REG = (portc_io_base + 0x24); /* 0x24 */
   void * PI_CFG0_REG = (portc_io_base + 0x120);
-  void * PH_CFG0_REG = (portc_io_base + 0xfc);
-  void * PH_CFG1_REG = (portc_io_base + 0x100);
+/*   void * PH_CFG0_REG = (portc_io_base + 0xfc); */
+/*   void * PH_CFG1_REG = (portc_io_base + 0x100); */
 
   pwm_available_chan[0].ctrl_addr = PWM_CTRL_REG_BASE;
   pwm_available_chan[0].pin_addr = PB_CFG0_REG;
@@ -699,7 +910,7 @@ void setup_available_channels( void ) {
   pwm_available_chan[0].ctrl_mask.s.ch0_prescaler = 0x0f;
   pwm_available_chan[0].ctrl_mask.s.ch0_en = 0x01;
   pwm_available_chan[0].ctrl_mask.s.ch0_act_state = 0x01;
-  pwm_available_chan[0].ctrl_mask.s.ch0_clk_gating = 0x01;
+  pwm_available_chan[0].ctrl_mask.s.ch0_clk_gating = 0x00;
   pwm_available_chan[0].ctrl_mask.s.ch0_mode = 0x01;
   pwm_available_chan[0].ctrl_mask.s.ch0_pulse_start = 0x01;
   pwm_available_chan[0].ctrl_current.initializer = 0;
@@ -709,6 +920,10 @@ void setup_available_channels( void ) {
   pwm_available_chan[0].pin_current.s0.pin2_select = 0x02;
   pwm_available_chan[0].pin_name = "PB2";
   pwm_available_chan[0].gpio_name = "gpio3";
+  pwm_available_chan[0].period = 10000;
+  pwm_available_chan[0].duty_percent = 50;
+  *(unsigned int *)&pwm_available_chan[0].period_reg = 0;
+  pwm_available_chan[0].prescale = 0;
 
 
   pwm_available_chan[1].ctrl_addr = PWM_CTRL_REG_BASE;
@@ -720,7 +935,7 @@ void setup_available_channels( void ) {
   pwm_available_chan[1].ctrl_mask.s.ch1_prescaler = 0x0f;
   pwm_available_chan[1].ctrl_mask.s.ch1_en = 0x01;
   pwm_available_chan[1].ctrl_mask.s.ch1_act_state = 0x01;
-  pwm_available_chan[1].ctrl_mask.s.ch1_clk_gating = 0x01;
+  pwm_available_chan[1].ctrl_mask.s.ch1_clk_gating = 0x00;
   pwm_available_chan[1].ctrl_mask.s.ch1_mode = 0x01;
   pwm_available_chan[1].ctrl_mask.s.ch1_pulse_start = 0x01;
   pwm_available_chan[1].ctrl_current.initializer = 0;
@@ -730,6 +945,10 @@ void setup_available_channels( void ) {
   pwm_available_chan[1].pin_current.s0.pin3_select = 0x02;
   pwm_available_chan[1].pin_name = "PI3";
   pwm_available_chan[1].gpio_name = "gpio5";
+  pwm_available_chan[1].period = 10000;
+  pwm_available_chan[1].duty_percent = 50;
+  *(unsigned int *)&pwm_available_chan[1].period_reg = 0;
+  pwm_available_chan[1].prescale = 0;
 }
 
 
