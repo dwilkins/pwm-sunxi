@@ -40,8 +40,8 @@
 void dump_pwm_ctrl_reg(sun4i_pwm_ctrl_t *pwm, sun4i_pwm_ctrl_t *pwm_compare,const char *name);
 void dump_pwm_period_reg(sun4i_pwm_period_t *period, sun4i_pwm_period_t *period_compare,const char *name);
 void dump_ioreg_cfg(ioreg_cfg0_t *cfg,ioreg_cfg0_t *cfg_compare, const char *name);
-const ioreg_cfg_ut * save_ioreg(void *ioreg);
-const sun4i_pwm_ctrl_ut * save_pwm_ctrl(int channel);
+const ioreg_cfg_ut *save_ioreg(void *ioreg);
+const sun4i_pwm_ctrl_ut *save_pwm_ctrl(int channel);
 void release_pwm_sunxi(struct kobject *kobj);
 void setup_available_channels(void );
 ssize_t set_pwm_mode(unsigned int enable, sun4i_pwm_available_channel_t *chan);
@@ -51,22 +51,22 @@ unsigned int get_active_cycles(sun4i_pwm_available_channel_t *chan);
 unsigned long convert_string_to_microseconds(const char *buf);
 int pwm_set_period_and_duty(sun4i_pwm_available_channel_t *chan);
 void fixup_duty(sun4i_pwm_available_channel_t *chan);
+
+
 static DEFINE_MUTEX(sysfs_lock);
 static struct class pwm_class;
 
-struct kobject * pwm0_kobj;
-struct kobject * pwm1_kobj;
+struct kobject *pwm0_kobj;
+struct kobject *pwm1_kobj;
 
 static sun4i_pwm_ctrl_ut gs_pwm_ctrl_backup;
 static unsigned int      gs_saved_ioregs;
 static ioreg_backup_t     gs_ioreg_backup[SUN4I_PWM_IOREG_MAX];
-void * PWM_CTRL_REG_BASE = NULL;
+void *PWM_CTRL_REG_BASE = NULL;
 
 
 static struct class_attribute pwm_class_attrs[] = {
-  /* __ATTR(pwm0.gpio3, 0555, NULL, NULL), */
-  /* __ATTR(pwm1.gpio5, 0555, NULL, NULL), */
-  __ATTR_NULL
+ __ATTR_NULL
 };
 
 
@@ -81,7 +81,6 @@ static ssize_t pwm_polarity_show(struct device *dev, struct device_attribute *at
 static ssize_t pwm_period_show(struct device *dev, struct device_attribute *attr, char *buf);
 static ssize_t pwm_duty_show(struct device *dev, struct device_attribute *attr, char *buf);
 static ssize_t pwm_run_show(struct device *dev,struct device_attribute *attr, char *buf);
-static ssize_t pwm_request_show(struct device *dev,struct device_attribute *attr, char *buf);
 static ssize_t pwm_duty_percent_show(struct device *dev,struct device_attribute *attr, char *buf);
 static ssize_t pwm_pulse_show(struct device *dev,struct device_attribute *attr, char *buf);
 static ssize_t pwm_pin_show(struct device *dev,struct device_attribute *attr, char *buf);
@@ -91,7 +90,6 @@ static ssize_t pwm_polarity_store(struct device *dev,struct device_attribute *at
 static ssize_t pwm_period_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size);
 static ssize_t pwm_duty_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size);
 static ssize_t pwm_run_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size);
-static ssize_t pwm_request_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size);
 static ssize_t pwm_duty_percent_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size);
 static ssize_t pwm_pulse_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size);
 
@@ -99,7 +97,6 @@ static DEVICE_ATTR(polarity, 0666,pwm_polarity_show, pwm_polarity_store);
 static DEVICE_ATTR(period, 0666, pwm_period_show, pwm_period_store);
 static DEVICE_ATTR(duty, 0666,pwm_duty_show, pwm_duty_store);
 static DEVICE_ATTR(run, 0666, pwm_run_show, pwm_run_store);
-static DEVICE_ATTR(request, 0666, pwm_request_show, pwm_request_store);
 static DEVICE_ATTR(duty_percent, 0666, pwm_duty_percent_show, pwm_duty_percent_store);
 static DEVICE_ATTR(pulse, 0666, pwm_pulse_show, pwm_pulse_store);
 static DEVICE_ATTR(pin, 0666, pwm_pin_show, NULL);
@@ -110,7 +107,6 @@ static const struct attribute *pwm_attrs[] = {
   &dev_attr_period.attr,
   &dev_attr_duty.attr,
   &dev_attr_run.attr,
-  &dev_attr_request.attr,
   &dev_attr_duty_percent.attr,
   &dev_attr_pulse.attr,
   &dev_attr_pin.attr,
@@ -122,8 +118,8 @@ static const struct attribute_group pwm_attr_group = {
   .attrs = (struct attribute **) pwm_attrs
 };
 
-struct device * pwm0_gpio3;
-struct device * pwm1_gpio5;
+struct device *pwm0_gpio3;
+struct device *pwm1_gpio5;
 
 
 static sun4i_pwm_available_channel_t pwm_available_chan[2];
@@ -175,8 +171,8 @@ int init_module(void)
 
 void cleanup_module(void)
 {
-  void * timer_base = ioremap(SW_PA_TIMERC_IO_BASE, 0x400);
-  void * PWM_CTRL_REG_BASE = timer_base + 0x200;
+  void *timer_base = ioremap(SW_PA_TIMERC_IO_BASE, 0x400);
+  void *PWM_CTRL_REG_BASE = timer_base + 0x200;
 
   device_destroy(&pwm_class,pwm0_gpio3->devt);
   device_destroy(&pwm_class,pwm1_gpio5->devt);
@@ -234,9 +230,6 @@ static ssize_t pwm_run_show(struct device *dev,struct device_attribute *attr, ch
   }
 
   return status;
-}
-static ssize_t pwm_request_show(struct device *dev,struct device_attribute *attr, char *buf) {
-  return 0;
 }
 static ssize_t pwm_duty_percent_show(struct device *dev,struct device_attribute *attr, char *buf) {
   const sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
@@ -424,19 +417,6 @@ pwm_ctrl_prescale_t  get_best_prescale(unsigned long long period_in) {
   const unsigned long min_period_cycles = 0x02; /* 10 */
   pwm_ctrl_prescale_t best_prescale = 0;
 
-  /*
-   *
-   * (clock / 2) / (2 * clock) * scale * period (around 200)
-   * TOP = f_clk/ (2 x N x f_ocr)
-
-   * f(OCnxPFCPWM) = 24mhz / (2 * prescale * TOP)
-   * or f(OCnxPFCPWM) * TOP = 24mhz / (2 * prescale)
-   ********** or f(OCnxPFCPWM) * TOP * 2 = 24mhz / prescale
-   entire_cycles = chan->period / (2 * prescale_divisor[chan->prescale] / 24);
-
-
-   */
-
   best_prescale = -1;
   for(i = 0 ; i < 13 ; i++) {
     unsigned long int check_value = (prescale_divisor[i] /24);
@@ -483,32 +463,15 @@ pwm_ctrl_prescale_t  get_best_prescale(unsigned long long period_in) {
 
     best_prescale = PRESCALE_DIV480;  /* Something that's not zero - use invalid prescale value */
   }
-/*
-  chan->prescale = best_prescale;
-  printk(KERN_INFO "Entire cycles will be ",get_entire_cycles(channels));
-  printk(KERN_INFO "Active cycles will be ",get_active_cycles(channels));
-*/
-
-/*
-  for(i = 0 ; i < 13 ; i++) {
-    printk(KERN_INFO "pwm: checking prescale for %Lu\n",(unsigned long long)((max_cycles * 24ULL * (unsigned long long) prescale_divisor[i])));
-    if((period) < ((max_cycles * 24ULL * (unsigned long long)prescale_divisor[i]))) {
-      best_prescale = i;
-      break;
-    }
-  }
-*/
 
   printk(KERN_INFO "pwm: best_prescale is %u for %lu\n",best_prescale,period);
   printk(KERN_INFO "pwm: divisor is  is %u\n",prescale_divisor[best_prescale]);
   return best_prescale;
 }
 
-   /* TOP = f_clk/ (2 x N x f_ocr) */
+
 unsigned int get_entire_cycles(sun4i_pwm_available_channel_t *chan) {
   unsigned int entire_cycles = 0x0;
-  /* TOP = f_clk/ (2 x N x f_ocr) */
-  /* entire_cycles = period_us / prescale_divisor[chan->prescale] / 24; */
   if ((2 * prescale_divisor[chan->prescale] * MAX_CYCLES) > 0) {
     entire_cycles = chan->period / (prescale_divisor[chan->prescale] /24);
     printk(KERN_INFO "pwm: Calculated entire cycles to be %u - hope that's right\n",entire_cycles);
@@ -519,7 +482,6 @@ unsigned int get_entire_cycles(sun4i_pwm_available_channel_t *chan) {
 
 unsigned int get_active_cycles(sun4i_pwm_available_channel_t *chan) {
   unsigned int active_cycles = 0x0ff;
-/*  active_cycles = (duty_us / prescale_divisor[chan->prescale]) / 24; */
   if(!chan->duty && chan->period) {
     active_cycles = get_entire_cycles(chan);
     printk(KERN_INFO "pwm: Forcing active cycles to be %u - because it's zero\n",active_cycles);
@@ -552,9 +514,7 @@ static ssize_t pwm_run_store(struct device *dev,struct device_attribute *attr, c
   }
   return size;
 }
-static ssize_t pwm_request_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size) {
-  return size;
-}
+
 static ssize_t pwm_duty_percent_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size) {
   unsigned int duty_percent = 0;
   sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
