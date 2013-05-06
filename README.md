@@ -41,7 +41,7 @@ Creates a sysfs structure like the following:
   duty expressed as a percentage.  Whole numbers only
 
 <pre>
-    echo 50 > /sys/class/pwm-sunxi/pwm0.gpio3/duty_percen
+    echo 50 > /sys/class/pwm-sunxi/pwm0.gpio3/duty_percent
 </pre>
 
 * polarity(r/w)
