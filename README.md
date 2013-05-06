@@ -5,6 +5,7 @@ Kernel Module to support pwm for the sun4i (and others???)
 
 Creates a sysfs structure like the following:
 
+<pre>
    -- pwm-sunxi
       |
       +----pwmX.gpioY
@@ -17,7 +18,7 @@ Creates a sysfs structure like the following:
                +---pulse
                +---pin
                +---run
-
+</pre>
 
 * period (r/w)
   period that makes up a cycle.  Can be expressed as hz, khz, ms, or us.  Whole numbers only.Examples:
