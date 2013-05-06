@@ -24,11 +24,13 @@ Creates a sysfs structure like the following:
 
   period that makes up a cycle.  Can be expressed as hz, khz, ms, or us.  Whole numbers only.Examples:
 
+<code>
     echo 10hz > /sys/class/pwm-sunxi/pwm0.gpio3/period
     echo 1khz > /sys/class/pwm-sunxi/pwm0.gpio3/period
     echo 100ms > /sys/class/pwm-sunxi/pwm0.gpio3/period
     echo 100us > /sys/class/pwm-sunxi/pwm0.gpio3/period
     echo 150khz > /sys/class/pwm-sunxi/pwm0.gpio3/period
+</code>
 
 * duty (r/w)
 
@@ -37,6 +39,10 @@ Creates a sysfs structure like the following:
 * duty_percent (r/w)
 
   duty expressed as a percentage.  Whole numbers only
+
+<code>
+    echo 50 > /sys/class/pwm-sunxi/pwm0.gpio3/duty_percen
+</code>
 
 * polarity(r/w)
 
@@ -60,5 +66,7 @@ Creates a sysfs structure like the following:
 * run (r/w)
   Enable the PWM with the previously set parameters.  Example:
 
+<code>
     echo 1 > /sys/class/pwm-sunxi/pwm0.gpio3/run
     echo 0 > /sys/class/pwm-sunxi/pwm0.gpio3/run
+</code>
