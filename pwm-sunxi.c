@@ -439,7 +439,7 @@ pwm_ctrl_prescale_t  get_best_prescale(unsigned long long period_in) {
 
   best_prescale = -1;
   for(i = 0 ; i < 13 ; i++) {
-    unsigned long int check_value = (prescale_divisor[i] / 48);
+    unsigned long int check_value = (prescale_divisor[i] /24);
     if(check_value < 1 || check_value > period) {
       printk(KERN_INFO "pwm: Skipping index %d",i);
       break;
@@ -460,7 +460,7 @@ pwm_ctrl_prescale_t  get_best_prescale(unsigned long long period_in) {
 
   if(best_prescale > 13) {
     for(i = 0 ; i < 13 ; i++) {
-      unsigned long int check_value = (prescale_divisor[i] / 48);
+      unsigned long int check_value = (prescale_divisor[i] /24);
       if(check_value < 1 || check_value > period) {
         printk(KERN_INFO "pwm: Skipping index %d",i);
         break;
@@ -510,7 +510,7 @@ unsigned int get_entire_cycles(sun4i_pwm_available_channel_t *chan) {
   /* TOP = f_clk/ (2 x N x f_ocr) */
   /* entire_cycles = period_us / prescale_divisor[chan->prescale] / 24; */
   if ((2 * prescale_divisor[chan->prescale] * MAX_CYCLES) > 0) {
-    entire_cycles = chan->period / (prescale_divisor[chan->prescale] / 48);
+    entire_cycles = chan->period / (prescale_divisor[chan->prescale] /24);
     printk(KERN_INFO "pwm: Calculated entire cycles to be %u - hope that's right\n",entire_cycles);
   }
   if(entire_cycles == 0) {entire_cycles = 0x0ff;}
@@ -524,7 +524,7 @@ unsigned int get_active_cycles(sun4i_pwm_available_channel_t *chan) {
     active_cycles = get_entire_cycles(chan);
     printk(KERN_INFO "pwm: Forcing active cycles to be %u - because it's zero\n",active_cycles);
   } else if ((2 * prescale_divisor[chan->prescale] * MAX_CYCLES) > 0) {
-    active_cycles = chan->duty / (prescale_divisor[chan->prescale] / 48);
+    active_cycles = chan->duty / (prescale_divisor[chan->prescale] /24);
     printk(KERN_INFO "pwm: Calculated active cycles to be %u - hope that's right\n",active_cycles);
   }
   if(active_cycles == 0) {active_cycles = 0x0ff;}
@@ -641,10 +641,18 @@ ssize_t set_pwm_mode(unsigned int enable, sun4i_pwm_available_channel_t *chan) {
   if(enable == 1) {
     switch (chan->channel) {
     case 0:
-      chan->ctrl_current.s.ch0_en = 1;
+      chan->ctrl_current.s.ch0_prescaler = 0;
+      chan->ctrl_current.s.ch0_act_state = 0;
+      chan->ctrl_current.s.ch0_mode = 0;
+      chan->ctrl_current.s.ch0_pulse_start = 0;
+      chan->ctrl_current.s.ch0_en = 0;
       chan->ctrl_current.s.ch0_clk_gating = 0;
       break;
     case 1:
+      chan->ctrl_current.s.ch1_prescaler = 0;
+      chan->ctrl_current.s.ch1_act_state = 0;
+      chan->ctrl_current.s.ch1_mode = 0;
+      chan->ctrl_current.s.ch1_pulse_start = 0;
       chan->ctrl_current.s.ch1_en = 1;
       chan->ctrl_current.s.ch1_clk_gating = 0;
       break;
@@ -655,6 +663,7 @@ ssize_t set_pwm_mode(unsigned int enable, sun4i_pwm_available_channel_t *chan) {
     if(status) {
       return status;
     }
+    writel(chan->ctrl_current.initializer,chan->ctrl_addr);
     if(chan->pin_mask.s0.pin0_select) {
       chan->pin_current.s0.pin0_select = SELECT_PWM;
     } else if(chan->pin_mask.s0.pin1_select) {
