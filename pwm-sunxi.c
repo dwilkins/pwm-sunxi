@@ -36,21 +36,24 @@
 #include <linux/limits.h>
 #include <pwm-sunxi.h>
 
+/*
+ * Forward Declarations
+ */
 
-void dump_pwm_ctrl_reg(sun4i_pwm_ctrl_t *pwm, sun4i_pwm_ctrl_t *pwm_compare,const char *name);
-void dump_pwm_period_reg(sun4i_pwm_period_t *period, sun4i_pwm_period_t *period_compare,const char *name);
-void dump_ioreg_cfg(ioreg_cfg0_t *cfg,ioreg_cfg0_t *cfg_compare, const char *name);
-const ioreg_cfg_ut *save_ioreg(void *ioreg);
-const sun4i_pwm_ctrl_ut *save_pwm_ctrl(int channel);
+void dump_pwm_ctrl_reg(struct sun4i_pwm_ctrl *pwm, struct sun4i_pwm_ctrl *pwm_compare,const char *name);
+void dump_pwm_period_reg(struct sun4i_pwm_period *period, struct sun4i_pwm_period *period_compare,const char *name);
+void dump_ioreg_cfg(struct ioreg_cfg0 *cfg,struct ioreg_cfg0 *cfg_compare, const char *name);
+const union ioreg_cfg_u *save_ioreg(void *ioreg);
+const union sun4i_pwm_ctrl_u *save_pwm_ctrl(int channel);
 void release_pwm_sunxi(struct kobject *kobj);
 void setup_available_channels(void );
-ssize_t set_pwm_mode(unsigned int enable, sun4i_pwm_available_channel_t *chan);
-pwm_ctrl_prescale_t  get_best_prescale(unsigned long long period);
-unsigned int get_entire_cycles(sun4i_pwm_available_channel_t *chan);
-unsigned int get_active_cycles(sun4i_pwm_available_channel_t *chan);
+ssize_t set_pwm_mode(unsigned int enable, struct sun4i_pwm_available_channel *chan);
+enum pwm_ctrl_prescale  get_best_prescale(unsigned long long period);
+unsigned int get_entire_cycles(struct sun4i_pwm_available_channel *chan);
+unsigned int get_active_cycles(struct sun4i_pwm_available_channel *chan);
 unsigned long convert_string_to_microseconds(const char *buf);
-int pwm_set_period_and_duty(sun4i_pwm_available_channel_t *chan);
-void fixup_duty(sun4i_pwm_available_channel_t *chan);
+int pwm_set_period_and_duty(struct sun4i_pwm_available_channel *chan);
+void fixup_duty(struct sun4i_pwm_available_channel *chan);
 
 
 static DEFINE_MUTEX(sysfs_lock);
@@ -59,23 +62,27 @@ static struct class pwm_class;
 struct kobject *pwm0_kobj;
 struct kobject *pwm1_kobj;
 
-static sun4i_pwm_ctrl_ut gs_pwm_ctrl_backup;
+static union sun4i_pwm_ctrl_u gs_pwm_ctrl_backup;
 static unsigned int      gs_saved_ioregs;
-static ioreg_backup_t     gs_ioreg_backup[SUN4I_PWM_IOREG_MAX];
+static struct ioreg_backup     gs_ioreg_backup[SUN4I_PWM_IOREG_MAX];
 void *PWM_CTRL_REG_BASE = NULL;
 
 
 static struct class_attribute pwm_class_attrs[] = {
- __ATTR_NULL
+	__ATTR_NULL
 };
 
 
 static struct class pwm_class = {
-  .name =         "pwm-sunxi",
-  .owner =        THIS_MODULE,
-  .class_attrs =  pwm_class_attrs,
+	.name =         "pwm-sunxi",
+	.owner =        THIS_MODULE,
+	.class_attrs =  pwm_class_attrs,
 };
 
+
+/*
+ * sysfs store / show functions
+ */
 
 static ssize_t pwm_polarity_show(struct device *dev, struct device_attribute *attr, char *buf);
 static ssize_t pwm_period_show(struct device *dev, struct device_attribute *attr, char *buf);
@@ -93,36 +100,36 @@ static ssize_t pwm_run_store(struct device *dev,struct device_attribute *attr, c
 static ssize_t pwm_duty_percent_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size);
 static ssize_t pwm_pulse_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size);
 
-static DEVICE_ATTR(polarity, 0666,pwm_polarity_show, pwm_polarity_store);
-static DEVICE_ATTR(period, 0666, pwm_period_show, pwm_period_store);
-static DEVICE_ATTR(duty, 0666,pwm_duty_show, pwm_duty_store);
-static DEVICE_ATTR(run, 0666, pwm_run_show, pwm_run_store);
-static DEVICE_ATTR(duty_percent, 0666, pwm_duty_percent_show, pwm_duty_percent_store);
-static DEVICE_ATTR(pulse, 0666, pwm_pulse_show, pwm_pulse_store);
-static DEVICE_ATTR(pin, 0666, pwm_pin_show, NULL);
-static DEVICE_ATTR(gpio, 0666, pwm_gpio_show, NULL);
+static DEVICE_ATTR(polarity, 0644,pwm_polarity_show, pwm_polarity_store);
+static DEVICE_ATTR(period, 0644, pwm_period_show, pwm_period_store);
+static DEVICE_ATTR(duty, 0644,pwm_duty_show, pwm_duty_store);
+static DEVICE_ATTR(run, 0644, pwm_run_show, pwm_run_store);
+static DEVICE_ATTR(duty_percent, 0644, pwm_duty_percent_show, pwm_duty_percent_store);
+static DEVICE_ATTR(pulse, 0644, pwm_pulse_show, pwm_pulse_store);
+static DEVICE_ATTR(pin, 0644, pwm_pin_show, NULL);
+static DEVICE_ATTR(gpio, 0644, pwm_gpio_show, NULL);
 
 static const struct attribute *pwm_attrs[] = {
-  &dev_attr_polarity.attr,
-  &dev_attr_period.attr,
-  &dev_attr_duty.attr,
-  &dev_attr_run.attr,
-  &dev_attr_duty_percent.attr,
-  &dev_attr_pulse.attr,
-  &dev_attr_pin.attr,
-  &dev_attr_gpio.attr,
-  NULL,
+	&dev_attr_polarity.attr,
+	&dev_attr_period.attr,
+	&dev_attr_duty.attr,
+	&dev_attr_run.attr,
+	&dev_attr_duty_percent.attr,
+	&dev_attr_pulse.attr,
+	&dev_attr_pin.attr,
+	&dev_attr_gpio.attr,
+	NULL,
 };
 
 static const struct attribute_group pwm_attr_group = {
-  .attrs = (struct attribute **) pwm_attrs
+	.attrs = (struct attribute **) pwm_attrs
 };
 
 struct device *pwm0_gpio3;
 struct device *pwm1_gpio5;
 
 
-static sun4i_pwm_available_channel_t pwm_available_chan[2];
+static struct sun4i_pwm_available_channel pwm_available_chan[2];
 
 int init_module(void)
 {
@@ -176,7 +183,7 @@ void cleanup_module(void)
  */
 
 static ssize_t pwm_polarity_show(struct device *dev, struct device_attribute *attr, char *buf) {
-  const sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
+  const struct sun4i_pwm_available_channel *chan = dev_get_drvdata(dev);
   ssize_t status;
   switch (chan->channel) {
   case 0:
@@ -192,19 +199,19 @@ static ssize_t pwm_polarity_show(struct device *dev, struct device_attribute *at
   return status;
 }
 static ssize_t pwm_period_show(struct device *dev, struct device_attribute *attr, char *buf) {
-  const sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
+  const struct sun4i_pwm_available_channel *chan = dev_get_drvdata(dev);
   ssize_t status;
   status = sprintf(buf,"%lu",chan->period);
   return status;
 }
 static ssize_t pwm_duty_show(struct device *dev, struct device_attribute *attr, char *buf) {
-  const sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
+  const struct sun4i_pwm_available_channel *chan = dev_get_drvdata(dev);
   ssize_t status;
   status = sprintf(buf,"%lu",chan->duty);
   return status;
 }
 static ssize_t pwm_run_show(struct device *dev,struct device_attribute *attr, char *buf) {
-  const sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
+  const struct sun4i_pwm_available_channel *chan = dev_get_drvdata(dev);
   ssize_t status;
   switch (chan->channel) {
   case 0:
@@ -221,11 +228,11 @@ static ssize_t pwm_run_show(struct device *dev,struct device_attribute *attr, ch
   return status;
 }
 static ssize_t pwm_duty_percent_show(struct device *dev,struct device_attribute *attr, char *buf) {
-  const sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
+  const struct sun4i_pwm_available_channel *chan = dev_get_drvdata(dev);
   return sprintf(buf,"%u",chan->duty_percent);
 }
 static ssize_t pwm_pulse_show(struct device *dev,struct device_attribute *attr, char *buf) {
-  const sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
+  const struct sun4i_pwm_available_channel *chan = dev_get_drvdata(dev);
   ssize_t status;
   switch (chan->channel) {
   case 0:
@@ -242,7 +249,7 @@ static ssize_t pwm_pulse_show(struct device *dev,struct device_attribute *attr, 
 }
 
 static ssize_t pwm_pin_show(struct device *dev,struct device_attribute *attr, char *buf) {
-  const sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
+  const struct sun4i_pwm_available_channel *chan = dev_get_drvdata(dev);
   ssize_t status;
   status = sprintf(buf,"%s",chan->pin_name);
 
@@ -250,7 +257,7 @@ static ssize_t pwm_pin_show(struct device *dev,struct device_attribute *attr, ch
 }
 
 static ssize_t pwm_gpio_show(struct device *dev,struct device_attribute *attr, char *buf) {
-  const sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
+  const struct sun4i_pwm_available_channel *chan = dev_get_drvdata(dev);
   ssize_t status;
   status = sprintf(buf,"%s",chan->gpio_name);
   return status;
@@ -261,7 +268,7 @@ static ssize_t pwm_gpio_show(struct device *dev,struct device_attribute *attr, c
  */
 
 static ssize_t pwm_polarity_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size) {
-  sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
+  struct sun4i_pwm_available_channel *chan = dev_get_drvdata(dev);
   ssize_t status = -EINVAL;
   int act_state = 0;
 
@@ -284,7 +291,7 @@ static ssize_t pwm_polarity_store(struct device *dev,struct device_attribute *at
 }
 static ssize_t pwm_period_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size) {
   unsigned long long period = 0;
-  sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
+  struct sun4i_pwm_available_channel *chan = dev_get_drvdata(dev);
 
   period = convert_string_to_microseconds(buf);
   if(!period || period > ULONG_MAX) {
@@ -304,7 +311,7 @@ static ssize_t pwm_period_store(struct device *dev,struct device_attribute *attr
 }
 static ssize_t pwm_duty_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size) {
   unsigned long long duty = 0;
-  sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
+  struct sun4i_pwm_available_channel *chan = dev_get_drvdata(dev);
 
   /* sscanf(buf,"%Lu",&duty); */ /* L means long long pointer */
   duty = convert_string_to_microseconds(buf);
@@ -316,7 +323,7 @@ static ssize_t pwm_duty_store(struct device *dev,struct device_attribute *attr, 
   return size;
 }
 
-time_suffix_t suffixes[] = {
+struct time_suffix suffixes[] = {
   [0] = { .suffix = "hz",  .multiplier =          1, .freq = true  },
   [1] = { .suffix = "khz", .multiplier =       1000, .freq = true  },
   [2] = { .suffix = "mhz", .multiplier =    1000000, .freq = true  },
@@ -382,12 +389,12 @@ static const unsigned int prescale_divisor[13] = {120,
                                                   48000,
                                                   72000};
 
-pwm_ctrl_prescale_t  get_best_prescale(unsigned long long period_in) {
+enum pwm_ctrl_prescale  get_best_prescale(unsigned long long period_in) {
   int i;
   unsigned long period = period_in;
   const unsigned long min_optimal_period_cycles = 0x07f; /* 127 */
   const unsigned long min_period_cycles = 0x02; /* 10 */
-  pwm_ctrl_prescale_t best_prescale = 0;
+  enum pwm_ctrl_prescale best_prescale = 0;
 
   best_prescale = -1;
   for(i = 0 ; i < 13 ; i++) {
@@ -423,7 +430,7 @@ pwm_ctrl_prescale_t  get_best_prescale(unsigned long long period_in) {
 }
 
 
-unsigned int get_entire_cycles(sun4i_pwm_available_channel_t *chan) {
+unsigned int get_entire_cycles(struct sun4i_pwm_available_channel *chan) {
   unsigned int entire_cycles = 0x0;
   if ((2 * prescale_divisor[chan->prescale] * MAX_CYCLES) > 0) {
     entire_cycles = chan->period / (prescale_divisor[chan->prescale] /24);
@@ -432,7 +439,7 @@ unsigned int get_entire_cycles(sun4i_pwm_available_channel_t *chan) {
   return entire_cycles;
 }
 
-unsigned int get_active_cycles(sun4i_pwm_available_channel_t *chan) {
+unsigned int get_active_cycles(struct sun4i_pwm_available_channel *chan) {
   unsigned int active_cycles = 0x0ff;
   if(!chan->duty && chan->period) {
     active_cycles = get_entire_cycles(chan);
@@ -443,7 +450,7 @@ unsigned int get_active_cycles(sun4i_pwm_available_channel_t *chan) {
   return active_cycles;
 }
 
-void fixup_duty(sun4i_pwm_available_channel_t *chan) {
+void fixup_duty(struct sun4i_pwm_available_channel *chan) {
   if(chan->duty_percent > 0) {
     chan->duty = chan->period * chan->duty_percent / 100;
   }
@@ -452,7 +459,7 @@ void fixup_duty(sun4i_pwm_available_channel_t *chan) {
 
 
 static ssize_t pwm_run_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size) {
-  sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
+  struct sun4i_pwm_available_channel *chan = dev_get_drvdata(dev);
   ssize_t status = -EINVAL;
   int enable = 0;
 
@@ -465,7 +472,7 @@ static ssize_t pwm_run_store(struct device *dev,struct device_attribute *attr, c
 
 static ssize_t pwm_duty_percent_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size) {
   unsigned int duty_percent = 0;
-  sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
+  struct sun4i_pwm_available_channel *chan = dev_get_drvdata(dev);
 
   sscanf(buf,"%u",&duty_percent);
   if(duty_percent > 100) {
@@ -481,7 +488,7 @@ static ssize_t pwm_duty_percent_store(struct device *dev,struct device_attribute
   return size;
 }
 static ssize_t pwm_pulse_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size) {
-  sun4i_pwm_available_channel_t *chan = dev_get_drvdata(dev);
+  struct sun4i_pwm_available_channel *chan = dev_get_drvdata(dev);
   ssize_t status = -EINVAL;
   int pulse = 0;
   sscanf(buf,"%d",&pulse);
@@ -502,24 +509,24 @@ static ssize_t pwm_pulse_store(struct device *dev,struct device_attribute *attr,
   return status;
 }
 
-int pwm_set_period_and_duty(sun4i_pwm_available_channel_t *chan) {
+int pwm_set_period_and_duty(struct sun4i_pwm_available_channel *chan) {
   int return_val = -EINVAL;
   int entire_cycles = get_entire_cycles(chan);
   int active_cycles = get_active_cycles(chan);
-  chan->period_reg.unused1 = chan->period_reg.unused2 = 0;
+  chan->period_reg.initializer = 0;
   if(entire_cycles > active_cycles && active_cycles) {
-    chan->period_reg.pwm_entire_cycles = entire_cycles;
-    chan->period_reg.pwm_active_cycles = active_cycles;
+    chan->period_reg.s.pwm_entire_cycles = entire_cycles;
+    chan->period_reg.s.pwm_active_cycles = active_cycles;
   } else {
-    chan->period_reg.pwm_entire_cycles = 0xff;
-    chan->period_reg.pwm_active_cycles = 0xff;
+    chan->period_reg.s.pwm_entire_cycles = 0xff;
+    chan->period_reg.s.pwm_active_cycles = 0xff;
   }
-  writel(*(unsigned int *)&chan->period_reg, chan->period_reg_addr);
+  writel(chan->period_reg.initializer, chan->period_reg_addr);
   return return_val;
  }
 
 
-ssize_t set_pwm_mode(unsigned int enable, sun4i_pwm_available_channel_t *chan) {
+ssize_t set_pwm_mode(unsigned int enable, struct sun4i_pwm_available_channel *chan) {
   ssize_t status = 0;
   if(enable == 2) {
     switch (chan->channel) {
@@ -584,7 +591,7 @@ ssize_t set_pwm_mode(unsigned int enable, sun4i_pwm_available_channel_t *chan) {
       chan->ctrl_current.s.ch1_prescaler = chan->prescale;
     }
     pwm_set_period_and_duty(chan);
-    dump_pwm_period_reg(&chan->period_reg,NULL,"period");
+    dump_pwm_period_reg(&chan->period_reg.s,NULL,"period");
     dump_ioreg_cfg(&chan->pin_current.s0,NULL,"pin_current");
     writel(chan->pin_current.initializer,chan->pin_addr);
     writel(chan->ctrl_current.initializer,chan->ctrl_addr);
@@ -623,9 +630,9 @@ ssize_t set_pwm_mode(unsigned int enable, sun4i_pwm_available_channel_t *chan) {
 }
 
 
-const ioreg_cfg_ut * save_ioreg(void *ioreg) {
+const union ioreg_cfg_u * save_ioreg(void *ioreg) {
   int i;
-  const ioreg_cfg_ut *return_val = NULL;
+  const union ioreg_cfg_u *return_val = NULL;
   for(i = 0; i < gs_saved_ioregs;i++) {
     if(gs_ioreg_backup[i].port_addr == ioreg) {return_val =  NULL;}
     if(!gs_ioreg_backup[i].port_addr) {break;}
@@ -634,14 +641,14 @@ const ioreg_cfg_ut * save_ioreg(void *ioreg) {
     gs_saved_ioregs = i;
     gs_ioreg_backup[gs_saved_ioregs].port_addr = ioreg;
     gs_ioreg_backup[gs_saved_ioregs].port.initializer = readl(ioreg);
-    return_val =  (const ioreg_cfg_ut *)&gs_ioreg_backup[i].port;
+    return_val =  (const union ioreg_cfg_u *)&gs_ioreg_backup[i].port;
   }
   return return_val;
 }
 
-const sun4i_pwm_ctrl_ut * save_pwm_ctrl(int channel) {
-  const sun4i_pwm_ctrl_ut *return_val;
-  sun4i_pwm_ctrl_ut saved_regs;
+const union sun4i_pwm_ctrl_u * save_pwm_ctrl(int channel) {
+  const union sun4i_pwm_ctrl_u *return_val;
+  union sun4i_pwm_ctrl_u saved_regs;
   saved_regs.initializer = readl(PWM_CTRL_REG_BASE);
   switch (channel) {
   case 0:
@@ -667,8 +674,8 @@ const sun4i_pwm_ctrl_ut * save_pwm_ctrl(int channel) {
 }
 
 
-void dump_ioreg_cfg(ioreg_cfg0_t *cfg,
-                    ioreg_cfg0_t *cfg_compare,
+void dump_ioreg_cfg(struct ioreg_cfg0 *cfg,
+                    struct ioreg_cfg0 *cfg_compare,
                     const char *name) {
 
   const char * cfg_pin0_select_diff = "";
@@ -711,8 +718,8 @@ void dump_ioreg_cfg(ioreg_cfg0_t *cfg,
 
 
 
-void dump_pwm_period_reg(sun4i_pwm_period_t *period,
-                         sun4i_pwm_period_t *period_compare,const char *name) {
+void dump_pwm_period_reg(struct sun4i_pwm_period *period,
+                         struct sun4i_pwm_period *period_compare,const char *name) {
 
   const char * period_entire_cycles_diff = "";
   const char * period_active_cycles_diff = "";
@@ -734,8 +741,8 @@ void dump_pwm_period_reg(sun4i_pwm_period_t *period,
 }
 
 
-void dump_pwm_ctrl_reg(sun4i_pwm_ctrl_t *pwm,
-                       sun4i_pwm_ctrl_t *pwm_compare,const char *name) {
+void dump_pwm_ctrl_reg(struct sun4i_pwm_ctrl *pwm,
+                       struct sun4i_pwm_ctrl *pwm_compare,const char *name) {
   const char * ch0_prescaler_diff = "";
   const char * ch0_en_diff = "";
   const char * ch0_act_state_diff = "";
