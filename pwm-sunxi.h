@@ -22,7 +22,7 @@
 
 
 #define SUN4I_PWM_IOREG_MAX 10
-
+#define SUN4I_MAX_HARDWARE_PWM_CHANNELS 2
 
 /*
  * structure that defines the pwm control register
@@ -55,7 +55,7 @@ struct sun4i_pwm_ctrl {
   unsigned int ch0_clk_gating:1;
   unsigned int ch0_mode:1;
   unsigned int ch0_pulse_start:1;
-  unsigned int unused1:6;
+  unsigned int unused1:7;
   unsigned int ch1_prescaler:4;
   unsigned int ch1_en:1;
   unsigned int ch1_act_state:1;

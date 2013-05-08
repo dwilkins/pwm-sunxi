@@ -128,7 +128,7 @@ struct device *pwm0_gpio3;
 struct device *pwm1_gpio5;
 
 
-static struct sun4i_pwm_available_channel pwm_available_chan[2];
+static struct sun4i_pwm_available_channel pwm_available_chan[SUN4I_MAX_HARDWARE_PWM_CHANNELS];
 
 int init_module(void)
 {
@@ -142,8 +142,8 @@ int init_module(void)
 		printk(KERN_INFO "pwm_class.dev_kobj = %p",pwm_class.dev_kobj);
 	}
 
-	pwm0_gpio3 = device_create(&pwm_class,NULL,MKDEV(0,0),&pwm_available_chan[0],"pwm0.gpio3");
-	pwm1_gpio5 = device_create(&pwm_class,NULL,MKDEV(0,0),&pwm_available_chan[1],"pwm1.gpio5");
+	pwm0_gpio3 = device_create(&pwm_class,NULL,MKDEV(0,0),&pwm_available_chan[0],"pwm0.gpio5");
+	pwm1_gpio5 = device_create(&pwm_class,NULL,MKDEV(0,0),&pwm_available_chan[1],"pwm1.gpio6");
 
 	pwm0_kobj = &pwm0_gpio3->kobj;
 	pwm1_kobj = &pwm1_gpio5->kobj;
@@ -526,10 +526,10 @@ int pwm_set_period_and_duty(struct sun4i_pwm_available_channel *chan) {
 
 ssize_t set_pwm_mode(unsigned int enable, struct sun4i_pwm_available_channel *chan) {
 	ssize_t status = 0;
-	if(enable == 2) {
+	if(enable == NO_ENABLE_CHANGE) {
 		switch (chan->channel) {
 		case 0:
-			enable = chan->ctrl_current.s.ch0_en;
+			enable = chan->ctrl_current.s.ch1_en;
 			break;
 		case 1:
 			enable = chan->ctrl_current.s.ch1_en;
@@ -539,7 +539,7 @@ ssize_t set_pwm_mode(unsigned int enable, struct sun4i_pwm_available_channel *ch
 			break;
 		}
 	}
-
+	chan->ctrl_current.initializer = readl(chan->ctrl_addr);
 	if(enable == 1) {
 		switch (chan->channel) {
 		case 0:
@@ -568,19 +568,26 @@ ssize_t set_pwm_mode(unsigned int enable, struct sun4i_pwm_available_channel *ch
 		writel(chan->ctrl_current.initializer,chan->ctrl_addr);
 		if(chan->pin_mask.s0.pin0_select) {
 			chan->pin_current.s0.pin0_select = SELECT_PWM;
-		} else if(chan->pin_mask.s0.pin1_select) {
+		}
+		if(chan->pin_mask.s0.pin1_select) {
 			chan->pin_current.s0.pin1_select = SELECT_PWM;
-		} else if(chan->pin_mask.s0.pin2_select) {
+		}
+		if(chan->pin_mask.s0.pin2_select) {
 			chan->pin_current.s0.pin2_select = SELECT_PWM;
-		} else if(chan->pin_mask.s0.pin3_select) {
+		}
+		if(chan->pin_mask.s0.pin3_select) {
 			chan->pin_current.s0.pin3_select = SELECT_PWM;
-		} else if(chan->pin_mask.s0.pin4_select) {
+		}
+		if(chan->pin_mask.s0.pin4_select) {
 			chan->pin_current.s0.pin4_select = SELECT_PWM;
-		} else if(chan->pin_mask.s0.pin5_select) {
+		}
+		if(chan->pin_mask.s0.pin5_select) {
 			chan->pin_current.s0.pin5_select = SELECT_PWM;
-		} else if(chan->pin_mask.s0.pin6_select) {
+		}
+		if(chan->pin_mask.s0.pin6_select) {
 			chan->pin_current.s0.pin6_select = SELECT_PWM;
-		} else if(chan->pin_mask.s0.pin7_select) {
+		}
+		if(chan->pin_mask.s0.pin7_select) {
 			chan->pin_current.s0.pin7_select = SELECT_PWM;
 		}
 		if(chan->channel == 0) {
@@ -804,11 +811,14 @@ void setup_available_channels( void ) {
 	void * portc_io_base = ioremap(SW_PA_PORTC_IO_BASE,0x400);
 	void * PB_CFG0_REG = (portc_io_base + 0x24); /* 0x24 */
 	void * PI_CFG0_REG = (portc_io_base + 0x120);
-/*   void * PH_CFG0_REG = (portc_io_base + 0xfc); */
-/*   void * PH_CFG1_REG = (portc_io_base + 0x100); */
+	/* void * PI_PULL0_REG = (portc_io_base + 0x13c); */
+	/* void * PB_PULL0_REG = (portc_io_base + 0x40); */
+	/* void * PH_CFG0_REG = (portc_io_base + 0xfc); */
+	/* union ioreg_cfg_u ph_cfg0; */
+	/*   void * PH_CFG1_REG = (portc_io_base + 0x100); */
 
 	pwm_available_chan[0].ctrl_addr = PWM_CTRL_REG_BASE;
-	pwm_available_chan[0].pin_addr = PB_CFG0_REG;
+	pwm_available_chan[0].pin_addr = PB_CFG0_REG; /* Orig??? */
 	pwm_available_chan[0].period_reg_addr = pwm_available_chan[0].ctrl_addr + 0x04;
 	pwm_available_chan[0].channel = 0;
 	pwm_available_chan[0].ctrl_backup.initializer = readl(pwm_available_chan[0].ctrl_addr);
@@ -821,11 +831,12 @@ void setup_available_channels( void ) {
 	pwm_available_chan[0].ctrl_mask.s.ch0_pulse_start = 0x01;
 	pwm_available_chan[0].ctrl_current.initializer = 0;
 	pwm_available_chan[0].pin_backup.initializer = readl(pwm_available_chan[0].pin_addr);
-	pwm_available_chan[0].pin_mask.initializer = 0;
+	pwm_available_chan[0].pin_mask.initializer = 0xffffffff;
 	pwm_available_chan[0].pin_mask.s0.pin2_select = 0x07;
 	pwm_available_chan[0].pin_current.s0.pin2_select = 0x02;
+
 	pwm_available_chan[0].pin_name = "PB2";
-	pwm_available_chan[0].gpio_name = "gpio3";
+	pwm_available_chan[0].gpio_name = "gpio5";
 	pwm_available_chan[0].period = 10000;
 	pwm_available_chan[0].duty_percent = 50;
 	*(unsigned int *)&pwm_available_chan[0].period_reg = 0;
@@ -835,7 +846,7 @@ void setup_available_channels( void ) {
 	pwm_available_chan[1].ctrl_addr = PWM_CTRL_REG_BASE;
 	pwm_available_chan[1].pin_addr = PI_CFG0_REG;
 	pwm_available_chan[1].period_reg_addr = pwm_available_chan[1].ctrl_addr + 0x08;
-	pwm_available_chan[1].channel = 0;
+	pwm_available_chan[1].channel = 1;
 	pwm_available_chan[1].ctrl_backup.initializer = readl(pwm_available_chan[1].ctrl_addr);
 	pwm_available_chan[1].ctrl_mask.initializer = 0;
 	pwm_available_chan[1].ctrl_mask.s.ch1_prescaler = 0x0f;
@@ -847,14 +858,16 @@ void setup_available_channels( void ) {
 	pwm_available_chan[1].ctrl_current.initializer = 0;
 	pwm_available_chan[1].pin_backup.initializer = readl(pwm_available_chan[1].pin_addr);
 	pwm_available_chan[1].pin_mask.initializer = 0;
+	pwm_available_chan[1].pin_mask.initializer = 0xffffffff;
 	pwm_available_chan[1].pin_mask.s0.pin3_select = 0x07;
 	pwm_available_chan[1].pin_current.s0.pin3_select = 0x02;
 	pwm_available_chan[1].pin_name = "PI3";
-	pwm_available_chan[1].gpio_name = "gpio5";
+	pwm_available_chan[1].gpio_name = "gpio6";
 	pwm_available_chan[1].period = 10000;
 	pwm_available_chan[1].duty_percent = 50;
 	*(unsigned int *)&pwm_available_chan[1].period_reg = 0;
 	pwm_available_chan[1].prescale = 0;
+
 }
 
 
