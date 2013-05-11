@@ -39,15 +39,13 @@
  * Forward Declarations
  */
 
-void dump_pwm_ctrl_reg(struct sun4i_pwm_ctrl *pwm, struct sun4i_pwm_ctrl *pwm_compare,const char *name);
-void dump_pwm_period_reg(struct sun4i_pwm_period *period, struct sun4i_pwm_period *period_compare,const char *name);
-void dump_ioreg_cfg(struct ioreg_cfg0 *cfg,struct ioreg_cfg0 *cfg_compare, const char *name);
-const union ioreg_cfg_u *save_ioreg(void *ioreg);
-const union sun4i_pwm_ctrl_u *save_pwm_ctrl(int channel);
+void pwm_dump_pwm_ctrl_reg(struct sun4i_pwm_ctrl *pwm, struct sun4i_pwm_ctrl *pwm_compare,const char *name);
+void pwm_dump_pwm_period_reg(struct sun4i_pwm_period *period, struct sun4i_pwm_period *period_compare,const char *name);
+void pwm_dump_ioreg_cfg(struct sun4i_ioreg_cfg0 *cfg,struct sun4i_ioreg_cfg0 *cfg_compare, const char *name);
 void release_pwm_sunxi(struct kobject *kobj);
-void setup_available_channels(void );
-ssize_t set_pwm_mode(unsigned int enable, struct sun4i_pwm_available_channel *chan);
-enum pwm_ctrl_prescale  get_best_prescale(unsigned long long period);
+void pwm_setup_available_channels(void );
+ssize_t pwm_set_mode(unsigned int enable, struct sun4i_pwm_available_channel *chan);
+enum sun4i_pwm_prescale  pwm_get_best_prescale(unsigned long long period);
 unsigned int get_entire_cycles(struct sun4i_pwm_available_channel *chan);
 unsigned int get_active_cycles(struct sun4i_pwm_available_channel *chan);
 unsigned long convert_string_to_microseconds(const char *buf);
@@ -61,9 +59,6 @@ static struct class pwm_class;
 struct kobject *pwm0_kobj;
 struct kobject *pwm1_kobj;
 
-static union sun4i_pwm_ctrl_u gs_pwm_ctrl_backup;
-static unsigned int      gs_saved_ioregs;
-static struct ioreg_backup     gs_ioreg_backup[SUN4I_PWM_IOREG_MAX];
 void *PWM_CTRL_REG_BASE = NULL;
 
 
@@ -133,7 +128,7 @@ static struct sun4i_pwm_available_channel pwm_available_chan[SUN4I_MAX_HARDWARE_
 int init_module(void)
 {
 	int return_val;
-	setup_available_channels();
+	pwm_setup_available_channels();
 
 	return_val = class_register(&pwm_class);
 	if(return_val) {
@@ -149,12 +144,12 @@ int init_module(void)
 	pwm1_kobj = &pwm1_gpio5->kobj;
 	return_val = sysfs_create_group(pwm0_kobj,&pwm_attr_group);
 	if(return_val) {
-		printk(KERN_INFO "pwm-sunxi: return from sysfs_create_group(pwm0.gpio3) was %d",return_val);
+		printk(KERN_INFO "pwm-sunxi: return from sysfs_create_group(pwm0.gpio5) was %d",return_val);
 	}
 
 	return_val = sysfs_create_group(pwm1_kobj,&pwm_attr_group);
 	if(return_val) {
-		printk(KERN_INFO "pwm-sunxi: return from sysfs_create_group(pwm1.gpio5) was %d",return_val);
+		printk(KERN_INFO "pwm-sunxi: return from sysfs_create_group(pwm1.gpio6) was %d",return_val);
 	}
 
 
@@ -171,6 +166,8 @@ void cleanup_module(void)
 	device_destroy(&pwm_class,pwm0_gpio3->devt);
 	device_destroy(&pwm_class,pwm1_gpio5->devt);
 	writel(0, PWM_CTRL_REG_BASE + 0);
+	writel(pwm_available_chan[0].pin_backup.initializer, pwm_available_chan[0].pin_addr);
+	writel(pwm_available_chan[1].pin_backup.initializer, pwm_available_chan[1].pin_addr);
 
 	class_unregister(&pwm_class);
 	printk(KERN_INFO "pwm: cleanup_module() called - unregister returned\n");
@@ -299,10 +296,10 @@ static ssize_t pwm_period_store(struct device *dev,struct device_attribute *attr
 			chan->duty = period;
 		}
 		chan->period = period;
-		chan->prescale = get_best_prescale(period);
+		chan->prescale = pwm_get_best_prescale(period);
 		fixup_duty(chan);
 		if(chan->duty) {
-			set_pwm_mode(NO_ENABLE_CHANGE,chan);
+			pwm_set_mode(NO_ENABLE_CHANGE,chan);
 		}
 	}
 	return size;
@@ -317,16 +314,16 @@ static ssize_t pwm_duty_store(struct device *dev,struct device_attribute *attr, 
 	duty = duty > chan->period ? chan->period : duty;
 	chan->duty_percent = -1; /* disable duty_percent if duty is set by hand */
 	chan->duty = duty;
-	set_pwm_mode(NO_ENABLE_CHANGE,chan);
+	pwm_set_mode(NO_ENABLE_CHANGE,chan);
 	return size;
 }
 
 struct time_suffix suffixes[] = {
-	[0] = { .suffix = "hz",  .multiplier =          1, .freq = true  },
+	[0] = { .suffix = "hz",  .multiplier =          1, .freq = true  }, /* f = 1/T */
 	[1] = { .suffix = "khz", .multiplier =       1000, .freq = true  },
 	[2] = { .suffix = "mhz", .multiplier =    1000000, .freq = true  },
 	[3] = { .suffix = "ghz", .multiplier = 1000000000, .freq = true  },
-	[4] = { .suffix = "ms",  .multiplier =       1000, .freq = false },
+	[4] = { .suffix = "ms",  .multiplier =       1000, .freq = false }, /* T = 1/f */
 	[5] = { .suffix = "us",  .multiplier =          1, .freq = false },
 	[6] = { .suffix = "ns",  .multiplier =          1, .freq = false },
 	[7] = { .suffix = NULL,  .multiplier =          0, .freq = false },
@@ -387,12 +384,19 @@ static const unsigned int prescale_divisor[13] = {120,
                                                   48000,
                                                   72000};
 
-enum pwm_ctrl_prescale  get_best_prescale(unsigned long long period_in) {
+/*
+ * Find the best prescale value for the period
+ * We want to get the highest period cycle count possible, so we look
+ * make a run through the prescale values looking for numbers over
+ * min_optimal_period_cycles.  If none are found then root though again
+ * taking anything that works
+ */
+enum sun4i_pwm_prescale  pwm_get_best_prescale(unsigned long long period_in) {
 	int i;
 	unsigned long period = period_in;
 	const unsigned long min_optimal_period_cycles = 0x07f; /* 127 */
 	const unsigned long min_period_cycles = 0x02; /* 10 */
-	enum pwm_ctrl_prescale best_prescale = 0;
+	enum sun4i_pwm_prescale best_prescale = 0;
 
 	best_prescale = -1;
 	for(i = 0 ; i < 13 ; i++) {
@@ -427,7 +431,10 @@ enum pwm_ctrl_prescale  get_best_prescale(unsigned long long period_in) {
 	return best_prescale;
 }
 
-
+/*
+ * return the number of cycles for the channel period computed from the microseconds
+ * for the period.  Allwinner docs call this "entire" cycles
+ */
 unsigned int get_entire_cycles(struct sun4i_pwm_available_channel *chan) {
 	unsigned int entire_cycles = 0x0;
 	if ((2 * prescale_divisor[chan->prescale] * MAX_CYCLES) > 0) {
@@ -437,6 +444,10 @@ unsigned int get_entire_cycles(struct sun4i_pwm_available_channel *chan) {
 	return entire_cycles;
 }
 
+/*
+ * return the number of cycles for the channel duty computed from the microseconds
+ * for the duty.  Allwinner docs call this "active" cycles
+ */
 unsigned int get_active_cycles(struct sun4i_pwm_available_channel *chan) {
 	unsigned int active_cycles = 0x0ff;
 	if(!chan->duty && chan->period) {
@@ -448,13 +459,20 @@ unsigned int get_active_cycles(struct sun4i_pwm_available_channel *chan) {
 	return active_cycles;
 }
 
+/*
+ * When the duty is set, compute the number of microseconds
+ * based on the period.
+ */
+
 void fixup_duty(struct sun4i_pwm_available_channel *chan) {
 	if(chan->duty_percent > 0) {
 		chan->duty = chan->period * chan->duty_percent / 100;
 	}
 }
 
-
+/*
+ * Stores the run (enable) bit.
+ */
 
 static ssize_t pwm_run_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size) {
 	struct sun4i_pwm_available_channel *chan = dev_get_drvdata(dev);
@@ -463,7 +481,7 @@ static ssize_t pwm_run_store(struct device *dev,struct device_attribute *attr, c
 
 	sscanf(buf,"%d",&enable);
 	if(enable < 2) {
-		status = set_pwm_mode(enable, chan);
+		status = pwm_set_mode(enable, chan);
 	}
 	return size;
 }
@@ -479,7 +497,7 @@ static ssize_t pwm_duty_percent_store(struct device *dev,struct device_attribute
 		chan->duty_percent = duty_percent;
 		if(chan->period) {
 			fixup_duty(chan);
-			set_pwm_mode(NO_ENABLE_CHANGE,chan);
+			pwm_set_mode(NO_ENABLE_CHANGE,chan);
 		}
 	}
 
@@ -509,8 +527,8 @@ static ssize_t pwm_pulse_store(struct device *dev,struct device_attribute *attr,
 
 int pwm_set_period_and_duty(struct sun4i_pwm_available_channel *chan) {
 	int return_val = -EINVAL;
-	int entire_cycles = get_entire_cycles(chan);
-	int active_cycles = get_active_cycles(chan);
+	unsigned int entire_cycles = get_entire_cycles(chan);
+	unsigned int active_cycles = get_active_cycles(chan);
 	chan->period_reg.initializer = 0;
 	if(entire_cycles > active_cycles && active_cycles) {
 		chan->period_reg.s.pwm_entire_cycles = entire_cycles;
@@ -524,7 +542,7 @@ int pwm_set_period_and_duty(struct sun4i_pwm_available_channel *chan) {
 }
 
 
-ssize_t set_pwm_mode(unsigned int enable, struct sun4i_pwm_available_channel *chan) {
+ssize_t pwm_set_mode(unsigned int enable, struct sun4i_pwm_available_channel *chan) {
 	ssize_t status = 0;
 	if(enable == NO_ENABLE_CHANGE) {
 		switch (chan->channel) {
@@ -566,6 +584,7 @@ ssize_t set_pwm_mode(unsigned int enable, struct sun4i_pwm_available_channel *ch
 			return status;
 		}
 		writel(chan->ctrl_current.initializer,chan->ctrl_addr);
+		chan->pin_current.initializer = readl(chan->pin_addr);
 		if(chan->pin_mask.s0.pin0_select) {
 			chan->pin_current.s0.pin0_select = SELECT_PWM;
 		}
@@ -596,8 +615,7 @@ ssize_t set_pwm_mode(unsigned int enable, struct sun4i_pwm_available_channel *ch
 			chan->ctrl_current.s.ch1_prescaler = chan->prescale;
 		}
 		pwm_set_period_and_duty(chan);
-		dump_pwm_period_reg(&chan->period_reg.s,NULL,"period");
-		dump_ioreg_cfg(&chan->pin_current.s0,NULL,"pin_current");
+
 		writel(chan->pin_current.initializer,chan->pin_addr);
 		writel(chan->ctrl_current.initializer,chan->ctrl_addr);
 		switch (chan->channel) {
@@ -611,7 +629,7 @@ ssize_t set_pwm_mode(unsigned int enable, struct sun4i_pwm_available_channel *ch
 			break;
 		}
 		writel(chan->ctrl_current.initializer,chan->ctrl_addr);
-		dump_pwm_ctrl_reg(&chan->ctrl_current.s,NULL,"pwm_ctrl");
+
 	} else if (enable == 0) {
 		switch (chan->channel) {
 		case 0:
@@ -629,58 +647,18 @@ ssize_t set_pwm_mode(unsigned int enable, struct sun4i_pwm_available_channel *ch
 		if(!status) {
 			chan->pin_current.initializer &= ~chan->pin_mask.initializer;
 			chan->pin_current.initializer |= readl(chan->pin_addr) & chan->pin_mask.initializer;
+			writel(chan->pin_current.initializer,chan->pin_addr);
+			writel(chan->ctrl_current.initializer,chan->ctrl_addr);
 		}
 	}
 	return status;
 }
 
 
-const union ioreg_cfg_u * save_ioreg(void *ioreg) {
-	int i;
-	const union ioreg_cfg_u *return_val = NULL;
-	for(i = 0; i < gs_saved_ioregs;i++) {
-		if(gs_ioreg_backup[i].port_addr == ioreg) {return_val =  NULL;}
-		if(!gs_ioreg_backup[i].port_addr) {break;}
-	}
-	if(i < SUN4I_PWM_IOREG_MAX) {
-		gs_saved_ioregs = i;
-		gs_ioreg_backup[gs_saved_ioregs].port_addr = ioreg;
-		gs_ioreg_backup[gs_saved_ioregs].port.initializer = readl(ioreg);
-		return_val =  (const union ioreg_cfg_u *)&gs_ioreg_backup[i].port;
-	}
-	return return_val;
-}
-
-const union sun4i_pwm_ctrl_u * save_pwm_ctrl(int channel) {
-	const union sun4i_pwm_ctrl_u *return_val;
-	union sun4i_pwm_ctrl_u saved_regs;
-	saved_regs.initializer = readl(PWM_CTRL_REG_BASE);
-	switch (channel) {
-	case 0:
-		gs_pwm_ctrl_backup.s.ch0_prescaler   = saved_regs.s.ch0_prescaler;
-		gs_pwm_ctrl_backup.s.ch0_en          = saved_regs.s.ch0_en;
-		gs_pwm_ctrl_backup.s.ch0_clk_gating  = saved_regs.s.ch0_clk_gating;
-		gs_pwm_ctrl_backup.s.ch0_mode        = saved_regs.s.ch0_mode;
-		gs_pwm_ctrl_backup.s.ch0_pulse_start = saved_regs.s.ch0_pulse_start;
-		return_val = &gs_pwm_ctrl_backup;
-		break;
-	case 1:
-		gs_pwm_ctrl_backup.s.ch1_prescaler   = saved_regs.s.ch1_prescaler;
-		gs_pwm_ctrl_backup.s.ch1_en          = saved_regs.s.ch1_en;
-		gs_pwm_ctrl_backup.s.ch1_clk_gating  = saved_regs.s.ch1_clk_gating;
-		gs_pwm_ctrl_backup.s.ch1_mode        = saved_regs.s.ch1_mode;
-		gs_pwm_ctrl_backup.s.ch1_pulse_start = saved_regs.s.ch1_pulse_start;
-		return_val = &gs_pwm_ctrl_backup;
-		break;
-	default:
-		return_val = NULL;
-	}
-	return return_val;
-}
 
 
-void dump_ioreg_cfg(struct ioreg_cfg0 *cfg,
-		struct ioreg_cfg0 *cfg_compare,
+void pwm_dump_ioreg_cfg(struct sun4i_ioreg_cfg0 *cfg,
+		struct sun4i_ioreg_cfg0 *cfg_compare,
 		const char *name) {
 
 	const char * cfg_pin0_select_diff = "";
@@ -722,12 +700,85 @@ void dump_ioreg_cfg(struct ioreg_cfg0 *cfg,
 }
 
 
+void pwm_dump_ioreg_pull(struct ioreg_pull *cfg,
+		struct ioreg_pull *cfg_compare,
+		const char *name) {
 
-void dump_pwm_period_reg(struct sun4i_pwm_period *period,
+	char *pin_state[4] = {
+		"Disable",
+		"Pull Up",
+		"Pull Down",
+		"Reserved"
+	};
+
+	const char * cfg_pin0_diff = "";
+	const char * cfg_pin1_diff = "";
+	const char * cfg_pin2_diff = "";
+	const char * cfg_pin3_diff = "";
+	const char * cfg_pin4_diff = "";
+	const char * cfg_pin5_diff = "";
+	const char * cfg_pin6_diff = "";
+	const char * cfg_pin7_diff = "";
+	const char * cfg_pin8_diff = "";
+	const char * cfg_pin9_diff = "";
+	const char * cfg_pin10_diff = "";
+	const char * cfg_pin11_diff = "";
+	const char * cfg_pin12_diff = "";
+	const char * cfg_pin13_diff = "";
+	const char * cfg_pin14_diff = "";
+	const char * cfg_pin15_diff = "";
+
+
+	if(!cfg || !name) {
+		return;
+	}
+
+
+	if(cfg && cfg_compare) {
+		cfg_pin0_diff = (const char *)(cfg->pin0 != cfg_compare->pin0 ? " ******" : "");
+		cfg_pin1_diff = (const char *)(cfg->pin1 != cfg_compare->pin1 ? " ******" : "");
+		cfg_pin2_diff = (const char *)(cfg->pin2 != cfg_compare->pin2 ? " ******" : "");
+		cfg_pin3_diff = (const char *)(cfg->pin3 != cfg_compare->pin3 ? " ******" : "");
+		cfg_pin4_diff = (const char *)(cfg->pin4 != cfg_compare->pin4 ? " ******" : "");
+		cfg_pin5_diff = (const char *)(cfg->pin5 != cfg_compare->pin5 ? " ******" : "");
+		cfg_pin6_diff = (const char *)(cfg->pin6 != cfg_compare->pin6 ? " ******" : "");
+		cfg_pin7_diff = (const char *)(cfg->pin7 != cfg_compare->pin7 ? " ******" : "");
+		cfg_pin8_diff = (const char *)(cfg->pin8 != cfg_compare->pin8 ? " ******" : "");
+		cfg_pin9_diff = (const char *)(cfg->pin9 != cfg_compare->pin9 ? " ******" : "");
+		cfg_pin10_diff = (const char *)(cfg->pin10 != cfg_compare->pin10 ? " ******" : "");
+		cfg_pin11_diff = (const char *)(cfg->pin11 != cfg_compare->pin11 ? " ******" : "");
+		cfg_pin12_diff = (const char *)(cfg->pin12 != cfg_compare->pin12 ? " ******" : "");
+		cfg_pin13_diff = (const char *)(cfg->pin13 != cfg_compare->pin13 ? " ******" : "");
+		cfg_pin14_diff = (const char *)(cfg->pin14 != cfg_compare->pin14 ? " ******" : "");
+		cfg_pin15_diff = (const char *)(cfg->pin15 != cfg_compare->pin15 ? " ******" : "");
+	}
+
+	printk(KERN_INFO "%s: pin0   :   0x%x (%s) %s",name,cfg->pin0,pin_state[cfg->pin0],cfg_pin0_diff);
+	printk(KERN_INFO "%s: pin1   :   0x%x (%s) %s",name,cfg->pin1,pin_state[cfg->pin1],cfg_pin1_diff);
+	printk(KERN_INFO "%s: pin2   :   0x%x (%s) %s",name,cfg->pin2,pin_state[cfg->pin2],cfg_pin2_diff);
+	printk(KERN_INFO "%s: pin3   :   0x%x (%s) %s",name,cfg->pin3,pin_state[cfg->pin3],cfg_pin3_diff);
+	printk(KERN_INFO "%s: pin4   :   0x%x (%s) %s",name,cfg->pin4,pin_state[cfg->pin4],cfg_pin4_diff);
+	printk(KERN_INFO "%s: pin5   :   0x%x (%s) %s",name,cfg->pin5,pin_state[cfg->pin5],cfg_pin5_diff);
+	printk(KERN_INFO "%s: pin6   :   0x%x (%s) %s",name,cfg->pin6,pin_state[cfg->pin6],cfg_pin6_diff);
+	printk(KERN_INFO "%s: pin7   :   0x%x (%s) %s",name,cfg->pin7,pin_state[cfg->pin7],cfg_pin7_diff);
+	printk(KERN_INFO "%s: pin8   :   0x%x (%s) %s",name,cfg->pin8,pin_state[cfg->pin8],cfg_pin8_diff);
+	printk(KERN_INFO "%s: pin9   :   0x%x (%s) %s",name,cfg->pin9,pin_state[cfg->pin9],cfg_pin9_diff);
+	printk(KERN_INFO "%s: pin10  :   0x%x (%s) %s",name,cfg->pin10,pin_state[cfg->pin10],cfg_pin10_diff);
+	printk(KERN_INFO "%s: pin11  :   0x%x (%s) %s",name,cfg->pin11,pin_state[cfg->pin11],cfg_pin11_diff);
+	printk(KERN_INFO "%s: pin12  :   0x%x (%s) %s",name,cfg->pin12,pin_state[cfg->pin12],cfg_pin12_diff);
+	printk(KERN_INFO "%s: pin13  :   0x%x (%s) %s",name,cfg->pin13,pin_state[cfg->pin13],cfg_pin13_diff);
+	printk(KERN_INFO "%s: pin14  :   0x%x (%s) %s",name,cfg->pin14,pin_state[cfg->pin14],cfg_pin14_diff);
+	printk(KERN_INFO "%s: pin15  :   0x%x (%s) %s",name,cfg->pin15,pin_state[cfg->pin15],cfg_pin15_diff);
+
+}
+
+
+
+void pwm_dump_pwm_period_reg(struct sun4i_pwm_period *period,
 			struct sun4i_pwm_period *period_compare,const char *name) {
 
-	const char * period_entire_cycles_diff = "";
-	const char * period_active_cycles_diff = "";
+	char period_entire_cycles_diff[25] = {0};
+	char period_active_cycles_diff[25] = {0};
 
 	if(!period || !name) {
 		return;
@@ -735,8 +786,12 @@ void dump_pwm_period_reg(struct sun4i_pwm_period *period,
 
 
 	if(period && period_compare) {
-		period_entire_cycles_diff  = (const char *)(period->pwm_entire_cycles != period_compare->pwm_entire_cycles ? " ******" : "");
-		period_entire_cycles_diff  = (const char *)(period->pwm_active_cycles != period_compare->pwm_active_cycles ? " ******" : "");
+		if(period->pwm_entire_cycles != period_compare->pwm_entire_cycles) {
+			sprintf(period_entire_cycles_diff," *** was **** 0x%x",period_compare->pwm_entire_cycles);
+		}
+		if(period->pwm_active_cycles != period_compare->pwm_active_cycles) {
+			sprintf(period_active_cycles_diff," *** was **** 0x%x",period_compare->pwm_active_cycles);
+		}
 	}
 
 	printk(KERN_INFO "%s: entire_cycles:   0x%x %s",name,period->pwm_entire_cycles,period_entire_cycles_diff);
@@ -746,7 +801,7 @@ void dump_pwm_period_reg(struct sun4i_pwm_period *period,
 }
 
 
-void dump_pwm_ctrl_reg(struct sun4i_pwm_ctrl *pwm,
+void pwm_dump_pwm_ctrl_reg(struct sun4i_pwm_ctrl *pwm,
 		struct sun4i_pwm_ctrl *pwm_compare,const char *name) {
 	const char * ch0_prescaler_diff = "";
 	const char * ch0_en_diff = "";
@@ -805,20 +860,22 @@ void dump_pwm_ctrl_reg(struct sun4i_pwm_ctrl *pwm,
 }
 
 
-void setup_available_channels( void ) {
-	void * timer_base = ioremap(SW_PA_TIMERC_IO_BASE, 0x400);
-	void * PWM_CTRL_REG_BASE = timer_base + 0x200;
-	void * portc_io_base = ioremap(SW_PA_PORTC_IO_BASE,0x400);
-	void * PB_CFG0_REG = (portc_io_base + 0x24); /* 0x24 */
-	void * PI_CFG0_REG = (portc_io_base + 0x120);
-	/* void * PI_PULL0_REG = (portc_io_base + 0x13c); */
-	/* void * PB_PULL0_REG = (portc_io_base + 0x40); */
-	/* void * PH_CFG0_REG = (portc_io_base + 0xfc); */
-	/* union ioreg_cfg_u ph_cfg0; */
-	/*   void * PH_CFG1_REG = (portc_io_base + 0x100); */
+void pwm_setup_available_channels( void ) {
+	void * timer_base = ioremap(SW_PA_TIMERC_IO_BASE, 0x400);  /* 0x01c20c00 */
+	void * PWM_CTRL_REG_BASE = timer_base + 0x200;             /* 0x01c20e00 */
+	void * portc_io_base = ioremap(SW_PA_PORTC_IO_BASE,0x400); /* 0x01c20800 */
+	void * PB_CFG0_REG = (portc_io_base + 0x24);               /* 0x01C20824 */
+	void * PI_CFG0_REG = (portc_io_base + 0x120);              /* 0x01c20920 */
+
+	/*void * PB_PULL0_REG = (portc_io_base + 0x040);*/             /* 0x01c20840 */
+	/*void * PI_PULL0_REG = (portc_io_base + 0x13c);*/             /* 0x01c2091c */
+	/*void * PH_CFG0_REG = (portc_io_base + 0xfc);*/               /* 0x01c208fc */
+	/*void * PH_CFG1_REG = (portc_io_base + 0x100);*/              /* 0x01c20900 */
+	/*void * PH_PULL0_REG = (portc_io_base + 0x118);*/             /* 0x01c20918 */
+
 
 	pwm_available_chan[0].ctrl_addr = PWM_CTRL_REG_BASE;
-	pwm_available_chan[0].pin_addr = PB_CFG0_REG; /* Orig??? */
+	pwm_available_chan[0].pin_addr = PB_CFG0_REG;
 	pwm_available_chan[0].period_reg_addr = pwm_available_chan[0].ctrl_addr + 0x04;
 	pwm_available_chan[0].channel = 0;
 	pwm_available_chan[0].ctrl_backup.initializer = readl(pwm_available_chan[0].ctrl_addr);
@@ -831,7 +888,7 @@ void setup_available_channels( void ) {
 	pwm_available_chan[0].ctrl_mask.s.ch0_pulse_start = 0x01;
 	pwm_available_chan[0].ctrl_current.initializer = 0;
 	pwm_available_chan[0].pin_backup.initializer = readl(pwm_available_chan[0].pin_addr);
-	pwm_available_chan[0].pin_mask.initializer = 0xffffffff;
+/*	pwm_available_chan[0].pin_mask.initializer = 0xffffffff; */
 	pwm_available_chan[0].pin_mask.s0.pin2_select = 0x07;
 	pwm_available_chan[0].pin_current.s0.pin2_select = 0x02;
 
@@ -858,7 +915,6 @@ void setup_available_channels( void ) {
 	pwm_available_chan[1].ctrl_current.initializer = 0;
 	pwm_available_chan[1].pin_backup.initializer = readl(pwm_available_chan[1].pin_addr);
 	pwm_available_chan[1].pin_mask.initializer = 0;
-	pwm_available_chan[1].pin_mask.initializer = 0xffffffff;
 	pwm_available_chan[1].pin_mask.s0.pin3_select = 0x07;
 	pwm_available_chan[1].pin_current.s0.pin3_select = 0x02;
 	pwm_available_chan[1].pin_name = "PI3";
@@ -868,8 +924,9 @@ void setup_available_channels( void ) {
 	*(unsigned int *)&pwm_available_chan[1].period_reg = 0;
 	pwm_available_chan[1].prescale = 0;
 
+
 }
 
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("David H. Wilkins");
+MODULE_AUTHOR("David H. Wilkins <dwilkins@conecuh.com>");
