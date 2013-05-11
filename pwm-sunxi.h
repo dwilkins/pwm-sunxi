@@ -162,6 +162,7 @@ union sun4i_ioreg_cfg_u {
 
 
 struct sun4i_pwm_available_channel{
+	unsigned int use_count;
 	void *ctrl_addr;                           /* Address of the control register */
 	void *pin_addr;                            /* Address of the pin register to change to PWM mode */
 	void *period_reg_addr;                     /* Address of the period register for this chan */
@@ -177,8 +178,8 @@ struct sun4i_pwm_available_channel{
 	union sun4i_ioreg_cfg_u pin_backup;        /* pin backup at init */
 	union sun4i_ioreg_cfg_u pin_mask;          /* mask of pin settings we can change */
 	union sun4i_ioreg_cfg_u pin_current;       /* current pin register */
-	char *pin_name;                            /* name of the pin */
-	char *gpio_name;                           /* name of the gpio device */
+	const char *pin_name;                      /* name of the pin */
+	const char *gpio_name;                     /* name of the gpio device */
 };
 
 /*
