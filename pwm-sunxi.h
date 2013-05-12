@@ -72,12 +72,17 @@ struct sun4i_pwm_ctrl {
 #define PWM_CTRL_ENABLE 1
 #define PWM_CTRL_DISABLE 0
 
-#define MAX_CYCLES 0x0ffUL /* max cycle count possible for period active and entire */
+#define MAX_CYCLES 0x0ffff /* max cycle count possible for period active and entire */
 struct sun4i_pwm_period {
+#if MAX_CYCLES > 0x0ff
+	unsigned int pwm_active_cycles:16;        /* duty cycle */
+	unsigned int pwm_entire_cycles:16;        /* period */
+#else
 	unsigned int pwm_active_cycles:8;        /* duty cycle */
 	unsigned int unused1:8;
 	unsigned int pwm_entire_cycles:8;        /* period */
 	unsigned int unused2:8;
+#endif
 };
 
 

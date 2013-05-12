@@ -426,8 +426,8 @@ static const unsigned int prescale_divisor[13] = {120,
 enum sun4i_pwm_prescale  pwm_get_best_prescale(unsigned long long period_in) {
 	int i;
 	unsigned long period = period_in;
-	const unsigned long min_optimal_period_cycles = 0x07f; /* 127 */
-	const unsigned long min_period_cycles = 0x02; /* 10 */
+	const unsigned long min_optimal_period_cycles = MAX_CYCLES / 2;
+	const unsigned long min_period_cycles = 0x02;
 	enum sun4i_pwm_prescale best_prescale = 0;
 
 	best_prescale = -1;
@@ -468,11 +468,15 @@ enum sun4i_pwm_prescale  pwm_get_best_prescale(unsigned long long period_in) {
  * for the period.  Allwinner docs call this "entire" cycles
  */
 unsigned int get_entire_cycles(struct sun4i_pwm_available_channel *chan) {
-	unsigned int entire_cycles = 0x0;
+	unsigned int entire_cycles = 0x01;
 	if ((2 * prescale_divisor[chan->prescale] * MAX_CYCLES) > 0) {
 		entire_cycles = chan->period / (prescale_divisor[chan->prescale] /24);
 	}
-	if(entire_cycles == 0) {entire_cycles = 0x0ff;}
+	if(entire_cycles == 0) {entire_cycles = MAX_CYCLES;}
+	if(entire_cycles > MAX_CYCLES) {entire_cycles = MAX_CYCLES;}
+
+	printk(KERN_INFO "Best prescale was %d, entire cycles was %u",chan->prescale, entire_cycles);
+
 	return entire_cycles;
 }
 
@@ -481,13 +485,17 @@ unsigned int get_entire_cycles(struct sun4i_pwm_available_channel *chan) {
  * for the duty.  Allwinner docs call this "active" cycles
  */
 unsigned int get_active_cycles(struct sun4i_pwm_available_channel *chan) {
-	unsigned int active_cycles = 0x0ff;
+	unsigned int active_cycles = 0x01;
+	unsigned int entire_cycles = get_entire_cycles(chan);
 	if(!chan->duty && chan->period) {
-		active_cycles = get_entire_cycles(chan);
+	active_cycles = entire_cycles-1;
 	} else if ((2 * prescale_divisor[chan->prescale] * MAX_CYCLES) > 0) {
 		active_cycles = chan->duty / (prescale_divisor[chan->prescale] /24);
 	}
-	if(active_cycles == 0) {active_cycles = 0x0ff;}
+/*	if(active_cycles == 0) {active_cycles = 0x0ff;} */
+	printk(KERN_INFO "Best prescale was %d, active cycles was %u (before entire check)",chan->prescale, active_cycles);
+	if(active_cycles > MAX_CYCLES) {active_cycles = entire_cycles-1;}
+	printk(KERN_INFO "Best prescale was %d, active cycles was %u (after  entire check)x",chan->prescale, active_cycles);
 	return active_cycles;
 }
 
@@ -562,12 +570,12 @@ int pwm_set_period_and_duty(struct sun4i_pwm_available_channel *chan) {
 	unsigned int entire_cycles = get_entire_cycles(chan);
 	unsigned int active_cycles = get_active_cycles(chan);
 	chan->period_reg.initializer = 0;
-	if(entire_cycles > active_cycles && active_cycles) {
+	if(entire_cycles >= active_cycles && active_cycles) {
 		chan->period_reg.s.pwm_entire_cycles = entire_cycles;
 		chan->period_reg.s.pwm_active_cycles = active_cycles;
 	} else {
-		chan->period_reg.s.pwm_entire_cycles = 0xff;
-		chan->period_reg.s.pwm_active_cycles = 0xff;
+		chan->period_reg.s.pwm_entire_cycles = MAX_CYCLES;
+		chan->period_reg.s.pwm_active_cycles = MAX_CYCLES;
 	}
 	writel(chan->period_reg.initializer, chan->period_reg_addr);
 	return return_val;
@@ -579,7 +587,7 @@ ssize_t pwm_set_mode(unsigned int enable, struct sun4i_pwm_available_channel *ch
 	if(enable == NO_ENABLE_CHANGE) {
 		switch (chan->channel) {
 		case 0:
-			enable = chan->ctrl_current.s.ch1_en;
+			enable = chan->ctrl_current.s.ch0_en;
 			break;
 		case 1:
 			enable = chan->ctrl_current.s.ch1_en;
