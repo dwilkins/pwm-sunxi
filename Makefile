@@ -1,6 +1,6 @@
 obj-m := pwm-sunxi.o
 # KDIR := /lib/modules/$(shell uname -r)/build
-KDIR := ~/project/hansg/build-boot-root/linux-sunxi/sun4i
+KDIR := ~/src/linux-trees/build-boot-root/linux-sunxi/sun4i
 PWD := $(shell pwd)
 O=sun4i
 ARCH=arm

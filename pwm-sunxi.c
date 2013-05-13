@@ -1,4 +1,4 @@
-/* -sunxi.c
+/* pwm-sunxi.c
  *
  * pwm module for sun4i (and others) like cubieboard and pcduino
  *
@@ -37,6 +37,7 @@
 #include <linux/limits.h>
 #include <pwm-sunxi.h>
 #include <linux/pwm.h>
+#include <linux/kdev_t.h>
 /*
  * Forward Declarations
  */
@@ -64,19 +65,6 @@ struct kobject *pwm0_kobj;
 struct kobject *pwm1_kobj;
 
 void *PWM_CTRL_REG_BASE = NULL;
-
-static struct platform_device sun4i_pwm_device = {
-	.name = "pwm-sunxi",
-};
-
-
-static struct platform_driver sun4i_pwm_driver = {
-/*	.remove = __devexit_p(sun4i_i2s_dev_remove), */
-	.driver = {
-		.name = "pwm-sunxi",
-		.owner = THIS_MODULE,
-	},
-};
 
 
 static struct class_attribute pwm_class_attrs[] = {
