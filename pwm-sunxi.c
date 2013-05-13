@@ -54,8 +54,6 @@ unsigned int get_active_cycles(struct sun4i_pwm_available_channel *chan);
 unsigned long convert_string_to_microseconds(const char *buf);
 int pwm_set_period_and_duty(struct sun4i_pwm_available_channel *chan);
 void fixup_duty(struct sun4i_pwm_available_channel *chan);
-static int init_sun4i_pwm(void);
-void cleanup_sun4i_pwm(void);
 
 
 static DEFINE_MUTEX(sysfs_lock);
@@ -90,7 +88,6 @@ static ssize_t pwm_run_show(struct device *dev,struct device_attribute *attr, ch
 static ssize_t pwm_duty_percent_show(struct device *dev,struct device_attribute *attr, char *buf);
 static ssize_t pwm_pulse_show(struct device *dev,struct device_attribute *attr, char *buf);
 static ssize_t pwm_pin_show(struct device *dev,struct device_attribute *attr, char *buf);
-static ssize_t pwm_gpio_show(struct device *dev,struct device_attribute *attr, char *buf);
 
 static ssize_t pwm_polarity_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size);
 static ssize_t pwm_period_store(struct device *dev,struct device_attribute *attr, const char *buf, size_t size);
@@ -106,7 +103,6 @@ static DEVICE_ATTR(run, 0644, pwm_run_show, pwm_run_store);
 static DEVICE_ATTR(duty_percent, 0644, pwm_duty_percent_show, pwm_duty_percent_store);
 static DEVICE_ATTR(pulse, 0644, pwm_pulse_show, pwm_pulse_store);
 static DEVICE_ATTR(pin, 0644, pwm_pin_show, NULL);
-static DEVICE_ATTR(gpio, 0644, pwm_gpio_show, NULL);
 
 static const struct attribute *pwm_attrs[] = {
 	&dev_attr_polarity.attr,
@@ -116,7 +112,6 @@ static const struct attribute *pwm_attrs[] = {
 	&dev_attr_duty_percent.attr,
 	&dev_attr_pulse.attr,
 	&dev_attr_pin.attr,
-	&dev_attr_gpio.attr,
 	NULL,
 };
 
@@ -124,26 +119,13 @@ static const struct attribute_group pwm_attr_group = {
 	.attrs = (struct attribute **) pwm_attrs
 };
 
-struct device *pwm0_gpio3;
-struct device *pwm1_gpio5;
+struct device *pwm0;
+struct device *pwm1;
 
 
 static struct sun4i_pwm_available_channel pwm_available_chan[SUN4I_MAX_HARDWARE_PWM_CHANNELS];
-#ifdef MODULE
-int init_module(void) {
-	return init_sun4i_pwm();
-}
 
-void cleanup_module(void)
-{
-	cleanup_sun4i_pwm();
-}
-
-#endif
-
-
-
-static int __init init_sun4i_pwm(void)
+static int __init sunxi_pwm_init(void)
 {
 	int return_val;
 	pwm_setup_available_channels();
@@ -159,19 +141,19 @@ static int __init init_sun4i_pwm(void)
 	platform_driver_register(&sun4i_pwm_driver);
 */
 
-	pwm0_gpio3 = device_create(&pwm_class,NULL,MKDEV(0,0),&pwm_available_chan[0],"pwm0.gpio5");
-	pwm1_gpio5 = device_create(&pwm_class,NULL,MKDEV(0,0),&pwm_available_chan[1],"pwm1.gpio6");
+	pwm0 = device_create(&pwm_class,NULL,MKDEV(0,0),&pwm_available_chan[0],"pwm0");
+	pwm1 = device_create(&pwm_class,NULL,MKDEV(0,0),&pwm_available_chan[1],"pwm1");
 
-	pwm0_kobj = &pwm0_gpio3->kobj;
-	pwm1_kobj = &pwm1_gpio5->kobj;
+	pwm0_kobj = &pwm0->kobj;
+	pwm1_kobj = &pwm1->kobj;
 	return_val = sysfs_create_group(pwm0_kobj,&pwm_attr_group);
 	if(return_val) {
-		printk(KERN_INFO "pwm-sunxi: return from sysfs_create_group(pwm0.gpio5) was %d",return_val);
+		printk(KERN_INFO "pwm-sunxi: return from sysfs_create_group(pwm0) was %d",return_val);
 	}
 
 	return_val = sysfs_create_group(pwm1_kobj,&pwm_attr_group);
 	if(return_val) {
-		printk(KERN_INFO "pwm-sunxi: return from sysfs_create_group(pwm1.gpio6) was %d",return_val);
+		printk(KERN_INFO "pwm-sunxi: return from sysfs_create_group(pwm1) was %d",return_val);
 	}
 
 
@@ -179,13 +161,13 @@ static int __init init_sun4i_pwm(void)
 	return return_val;
 }
 
-void cleanup_sun4i_pwm(void)
+void sunxi_pwm_exit(void)
 {
 	void *timer_base = ioremap(SW_PA_TIMERC_IO_BASE, 0x400);
 	void *PWM_CTRL_REG_BASE = timer_base + 0x200;
 
-	device_destroy(&pwm_class,pwm0_gpio3->devt);
-	device_destroy(&pwm_class,pwm1_gpio5->devt);
+	device_destroy(&pwm_class,pwm0->devt);
+	device_destroy(&pwm_class,pwm1->devt);
 	writel(0, PWM_CTRL_REG_BASE + 0);
 	writel(pwm_available_chan[0].pin_backup.initializer, pwm_available_chan[0].pin_addr);
 	writel(pwm_available_chan[1].pin_backup.initializer, pwm_available_chan[1].pin_addr);
@@ -268,13 +250,6 @@ static ssize_t pwm_pin_show(struct device *dev,struct device_attribute *attr, ch
 	ssize_t status;
 	status = sprintf(buf,"%s",chan->pin_name);
 
-	return status;
-}
-
-static ssize_t pwm_gpio_show(struct device *dev,struct device_attribute *attr, char *buf) {
-	const struct sun4i_pwm_available_channel *chan = dev_get_drvdata(dev);
-	ssize_t status;
-	status = sprintf(buf,"%s",chan->gpio_name);
 	return status;
 }
 
@@ -921,7 +896,6 @@ void pwm_setup_available_channels( void ) {
 	pwm_available_chan[0].pin_current.s0.pin2_select = 0x02;
 
 	pwm_available_chan[0].pin_name = "PB2";
-	pwm_available_chan[0].gpio_name = "gpio5";
 	pwm_available_chan[0].period = 10000;
 	pwm_available_chan[0].duty_percent = 50;
 	*(unsigned int *)&pwm_available_chan[0].period_reg = 0;
@@ -947,7 +921,6 @@ void pwm_setup_available_channels( void ) {
 	pwm_available_chan[1].pin_mask.s0.pin3_select = 0x07;
 	pwm_available_chan[1].pin_current.s0.pin3_select = 0x02;
 	pwm_available_chan[1].pin_name = "PI3";
-	pwm_available_chan[1].gpio_name = "gpio6";
 	pwm_available_chan[1].period = 10000;
 	pwm_available_chan[1].duty_percent = 50;
 	*(unsigned int *)&pwm_available_chan[1].period_reg = 0;
@@ -977,7 +950,7 @@ struct pwm_device *pwm_request(int pwm_id, const char *label)
 	if (found) {
 		if (pwm->chan->use_count == 0) {
 			pwm->chan->use_count++;
-			pwm->chan->gpio_name = label;
+			pwm->chan->name = label;
 		} else
 			pwm = ERR_PTR(-EBUSY);
 	} else
@@ -1011,7 +984,7 @@ int pwm_enable(struct pwm_device *pwm)
 	pwm_set_mode(PWM_CTRL_ENABLE,pwm->chan);
 	return 0;
 }
-/* EXPORT_SYMBOL(pwm_enable); */
+EXPORT_SYMBOL(pwm_enable);
 
 void pwm_disable(struct pwm_device *pwm)
 {
@@ -1030,6 +1003,13 @@ void pwm_free(struct pwm_device *pwm)
 		pr_warning("PWM device already freed\n");
 }
 EXPORT_SYMBOL(pwm_free);
+
+
+module_init(sunxi_pwm_init);
+module_exit(sunxi_pwm_exit);
+
+
+
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("David H. Wilkins <dwilkins@conecuh.com>");

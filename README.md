@@ -8,11 +8,10 @@ Creates a sysfs structure like the following:
 <pre>
    -- pwm-sunxi
       |
-      +----pwmX.gpioY
+      +----pwmX
                |
                +---duty
                +---duty_percent
-               +---gpio
                +---period
                +---polarity
                +---pulse
@@ -25,11 +24,11 @@ Creates a sysfs structure like the following:
   period that makes up a cycle.  Can be expressed as hz, khz, ms, or us.  Whole numbers only.Examples:
 
 <pre>
-    echo 10hz > /sys/class/pwm-sunxi/pwm0.gpio3/period
-    echo 1khz > /sys/class/pwm-sunxi/pwm0.gpio3/period
-    echo 100ms > /sys/class/pwm-sunxi/pwm0.gpio3/period
-    echo 100us > /sys/class/pwm-sunxi/pwm0.gpio3/period
-    echo 150khz > /sys/class/pwm-sunxi/pwm0.gpio3/period
+    echo 10hz > /sys/class/pwm-sunxi/pwm0/period
+    echo 1khz > /sys/class/pwm-sunxi/pwm0/period
+    echo 100ms > /sys/class/pwm-sunxi/pwm0/period
+    echo 100us > /sys/class/pwm-sunxi/pwm0/period
+    echo 150khz > /sys/class/pwm-sunxi/pwm0/period
 </pre>
 
 * duty (r/w)
@@ -41,7 +40,7 @@ Creates a sysfs structure like the following:
   duty expressed as a percentage.  Whole numbers only
 
 <pre>
-    echo 50 > /sys/class/pwm-sunxi/pwm0.gpio3/duty_percent
+    echo 50 > /sys/class/pwm-sunxi/pwm0/duty_percent
 </pre>
 
 * polarity(r/w)
@@ -58,15 +57,10 @@ Creates a sysfs structure like the following:
   Name of the A10 pin this pwm outputs on.  This is hardwired and informational only.
   Example:  PB2
 
-* gpio (ro)
-
-  Name of the GPIO pin this pwm outputs on.  This is hardwired and informational only.
-  Example: gpio3
-
 * run (r/w)
   Enable the PWM with the previously set parameters.  Example:
 
 <pre>
-    echo 1 > /sys/class/pwm-sunxi/pwm0.gpio3/run
-    echo 0 > /sys/class/pwm-sunxi/pwm0.gpio3/run
+    echo 1 > /sys/class/pwm-sunxi/pwm0/run
+    echo 0 > /sys/class/pwm-sunxi/pwm0/run
 </pre>
