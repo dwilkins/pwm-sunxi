@@ -143,7 +143,6 @@ static int __init sunxi_pwm_init(void)
 	return_val = sysfs_create_group(pwm0_kobj,&pwm_attr_group);
 	return_val = sysfs_create_group(pwm1_kobj,&pwm_attr_group);
 
-
 	printk(KERN_INFO "pwm-sunxi: Initialized...");
 	return return_val;
 }
