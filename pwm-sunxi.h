@@ -184,7 +184,7 @@ struct sun4i_pwm_available_channel{
 	union sun4i_ioreg_cfg_u pin_mask;          /* mask of pin settings we can change */
 	union sun4i_ioreg_cfg_u pin_current;       /* current pin register */
 	const char *pin_name;                      /* name of the pin */
-	const char *gpio_name;                     /* name of the gpio device */
+	const char *name;                          /* name of the pwm device from the pwm i/f */
 };
 
 /*
