@@ -28,6 +28,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
+#include <linux/interrupt.h>
 #include <linux/err.h>
 #include <asm/io.h>
 #include <asm/delay.h>
@@ -658,6 +659,13 @@ ssize_t pwm_set_mode(unsigned int enable, struct sun4i_pwm_available_channel *ch
 
 
 
+irqreturn_t pwm_handle_irq(int irq, void *dev_id)
+{
+    return IRQ_HANDLED;
+}
+
+
+
 
 void pwm_dump_ioreg_cfg(struct sun4i_ioreg_cfg0 *cfg,
 		struct sun4i_ioreg_cfg0 *cfg_compare,
@@ -867,7 +875,9 @@ void pwm_setup_available_channels( void ) {
 	void * PWM_CTRL_REG_BASE = timer_base + 0x200;             /* 0x01c20e00 */
 	void * portc_io_base = ioremap(SW_PA_PORTC_IO_BASE,0x400); /* 0x01c20800 */
 	void * PB_CFG0_REG = (portc_io_base + 0x24);               /* 0x01C20824 */
+	void * PB_MULTI_DRIVING_REG = (portc_io_base + 0x38);      /* 0x01C20838 */
 	void * PI_CFG0_REG = (portc_io_base + 0x120);              /* 0x01c20920 */
+	unsigned long pb_multi_driving_reg_val = 0;
 
 	/*void * PB_PULL0_REG = (portc_io_base + 0x040);*/             /* 0x01c20840 */
 	/*void * PI_PULL0_REG = (portc_io_base + 0x13c);*/             /* 0x01c2091c */
@@ -923,6 +933,13 @@ void pwm_setup_available_channels( void ) {
 	pwm_available_chan[1].duty_percent = 50;
 	*(unsigned int *)&pwm_available_chan[1].period_reg = 0;
 	pwm_available_chan[1].prescale = 0;
+
+	printk(KERN_INFO "pwm-sunxi: Initialized...");
+
+	pb_multi_driving_reg_val = readl(PB_MULTI_DRIVING_REG);
+	printk(KERN_INFO "pb_multi_drive = %lx",pb_multi_driving_reg_val);
+	pb_multi_driving_reg_val |= (0x03 << 4);
+	writel(pb_multi_driving_reg_val,PB_MULTI_DRIVING_REG);
 
 
 }
@@ -987,7 +1004,7 @@ int pwm_enable(struct pwm_device *pwm)
 	pwm_set_mode(PWM_CTRL_ENABLE,pwm->chan);
 	return 0;
 }
-EXPORT_SYMBOL(pwm_enable);
+/* EXPORT_SYMBOL(pwm_enable); */
 
 void pwm_disable(struct pwm_device *pwm)
 {
