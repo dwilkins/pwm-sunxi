@@ -72,7 +72,7 @@ struct sun4i_pwm_ctrl {
 #define PWM_CTRL_ENABLE 1
 #define PWM_CTRL_DISABLE 0
 
-#define MAX_CYCLES 0x0ffff /* max cycle count possible for period active and entire */
+#define MAX_CYCLES 0x0fe /* max cycle count possible for period active and entire */
 struct sun4i_pwm_period {
 #if MAX_CYCLES > 0x0ff
 	unsigned int pwm_active_cycles:16;        /* duty cycle */
@@ -150,18 +150,18 @@ union ioreg_pull_u {
 
 union sun4i_pwm_ctrl_u {
 	struct sun4i_pwm_ctrl s;
-	unsigned int initializer;
+	long unsigned int initializer;
 };
 
 union sun4i_pwm_period_u {
 	struct sun4i_pwm_period s;
-	unsigned int initializer;
+	long unsigned int initializer;
 };
 
 union sun4i_ioreg_cfg_u {
 	struct sun4i_ioreg_cfg0 s0; /* io register config 0 */
 	struct sun4i_ioreg_cfg1 s1; /* io register config 1 (just to make pin names look nice) */
-	unsigned int initializer;
+	long unsigned int initializer;
 };
 
 
@@ -175,7 +175,8 @@ struct sun4i_pwm_available_channel{
 	unsigned long period;                      /* Period in microseconds */
 	unsigned long duty;                        /* duty cycle in microseconds */
 	unsigned int duty_percent;                 /* percentage (drives duty microseconds if set) */
-	enum sun4i_pwm_prescale prescale;           /* best prescale value computed for period */
+	enum sun4i_pwm_prescale prescale;          /* best prescale value computed for period */
+	union sun4i_pwm_period_u period_reg_backup;/* period register backup from init */
 	union sun4i_pwm_period_u period_reg;       /* period register */
 	union sun4i_pwm_ctrl_u ctrl_backup;        /* control register backup at init */
 	union sun4i_pwm_ctrl_u ctrl_mask;          /* mask for ctrl register bit we can change */
