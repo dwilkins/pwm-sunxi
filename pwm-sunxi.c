@@ -679,7 +679,7 @@ ssize_t pwm_set_mode(unsigned int enable, struct sun4i_pwm_available_channel *ch
 		}
 		if(!status) {
 			chan->pin_current.initializer &= ~chan->pin_mask.initializer;
-			chan->pin_current.initializer |= readl(chan->pin_addr) & chan->pin_mask.initializer;
+			chan->pin_current.initializer |= (chan->pin_backup.initializer & chan->pin_mask.initializer);
 			writel(chan->pin_current.initializer,chan->pin_addr);
 			writel(chan->ctrl_current.initializer,chan->ctrl_addr);
 		}
