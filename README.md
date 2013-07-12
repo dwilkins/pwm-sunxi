@@ -19,6 +19,12 @@ Creates a sysfs structure like the following:
                +---run
 </pre>
 
+
+Period values can be a bit confusing - I have a google spreadsheet that you can 
+use to explore what will happen with different period and duty values
+
+[Allwinner A10 Prescale explorer](https://docs.google.com/spreadsheet/ccc?key=0Au-b3-RMznaCdEFkSGtESC1BVkd6T0pSdGZjTXl2YWc&usp=sharing)
+
 * period (r/w)
 
   period that makes up a cycle.  Can be expressed as hz, khz, ms, or us.  Whole numbers only.Examples:
